@@ -1,12 +1,31 @@
 # GCP Professional Cloud Network Engineer
 
 # CIDR Notation
+```mermaid
+flowchart TD
+    CIDR["123.52.36.0/24"]
+    CIDR --> PARTS["IP Address and Mask"]
+    PARTS --> DEC1["123"]
+    PARTS --> DEC2["52"]
+    PARTS --> DEC3["36"]
+    PARTS --> DEC4["0"]
+    PARTS --> DEC_MASK["24"]
 
-![2023-01-29_507x275.png](images/gcp-pcne/2023-01-29_507x275.png)
+    DEC1 --> BIN1["01111011"]
+    DEC2 --> BIN2["00110100"]
+    DEC3 --> BIN3["00100100"]
+    DEC4 --> BIN4["00000000"]
+ 
+    DEC_MASK --> BIN_MASK["11111111.11111111.11111111.00000000"]
+```
 
 ## RFC 1918 - Standard for Private IP addressing
 
-![2023-01-29_678x182.png](images/gcp-pcne/2023-01-29_678x182.png)
+| Class | Internal Addresses Range | CIDR Prefix |
+|:-:|:-:|:-:|
+| A | 10.0.0.0 – 10.255.255.255 | 10.0.0.0/8 |
+| B | 172.16.0.0 – 172.31.255.255 | 172.16.0.0/12 |
+| C | 192.168.0.0 – 192.168.255.255 | 192.168.0.0/16 |
 
 # Google Compute SLA
 
@@ -82,9 +101,14 @@ Use the Default Network is a bad practice because of many reasons so that it is 
 - Default Firewall rules are broad
 - Can not go beyond /16
 
-On each subnet there are some reserved IP Addresses
+There are four reserved IP addresses in each subnet's primary IPv4 range. There are no reserved IP addresses in the secondary IPv4 ranges.
 
-![2023-01-29_655x285.png](images/gcp-pcne/2023-01-29_655x285.png)
+| Reserved IP address | Description | Example |
+|---|---|---|
+| Network | First address in the primary IP range for the subnet | 10.1.2.0 in 10.1.2.0/24 |
+| Default gateway | Second address in the primary IP range for the subnet | 10.1.2.1 in 10.1.2.0/24 |
+| Second-to-last address | Second-to-last address in the primary IP range for the subnet that is reserved by Google Cloud for potential future use | 10.1.2.254 in 10.1.2.0/24 |
+| Broadcast | Last address in the primary IP range for the subnet | 10.1.2.255 in 10.1.2.0/24 |
 
 ## Subnets and IPv6 support
 
@@ -334,7 +358,8 @@ Outbound or egress traffic from a virtual machine is subject to **maximum networ
 - The roles needed to create a VPC peering connection is **Project Owner** or **Editor** or **Network Admin**.
 - Transitive peering is not supported
 
-![2023-01-29_682x329.png](images/gcp-pcne/2023-01-29_682x329.png)
+
+![2023-01-29_682x329.png](images/gcp-pcne/vpc_peering.png)
 
 # Centralized VPC - Shared VPC
 
@@ -349,7 +374,7 @@ Outbound or egress traffic from a virtual machine is subject to **maximum networ
     - During the creation process it will ask to give **Service project Admin** to specific Roles in the __service projects__
     - Also you can share only certain subnets only, you dont need to share all the subnets in the VPC
 
-![Untitled](images/gcp-pcne/Untitled.png)
+![Untitled](images/gcp-pcne/shared_vpc_roles.png)
 
 # Configure Private Access
 
@@ -598,7 +623,7 @@ The object that the IP address is assigned to:
 5. Public advertised prefix (PAP), min range of /24 initially then you can break it
 6. Public delegated prefixes (PDP), a subset of the of PAP configured within a single scope (a specific region or global)
 
-![Untitled](images/gcp-pcne/Untitled%201.png)
+![Untitled](images/gcp-pcne/byoip.png)
 
 - IAM permissions to use the IP address:
     - compute.addresses.* for regional IPs
@@ -757,7 +782,7 @@ Using Classic VPN for dynamic routing is no longer supported—with one exceptio
 - If we want to add subnets in other region and get automatically sync by the VPN, we will need to activate it at the VPC level, there is config parameter “dynamic routing mode” that can be either global or regional (the latter is the default). Change it into Global to make the configuration globally synchronized.
 - When creating BGP sessions in Cloud Routers for VPN tunnels or Interconnect VLAN attachments, the base advertised route priority can be configured for the BGP session. That value is sent as a multi-exit discriminator (MED) attribute. That particular tunnel or attachment is typically preferred, because lower values are preferred to higher values with all else being equal. Two BGP sessions with equal advertised priority would be equally preferred (active/active) and with different values, one would be prioritized (active/passive).
 
-### Static vs dynamic routing
+## Static vs dynamic routing
 
 | Static routing | Dynamic routing |
 | --- | --- |
@@ -773,37 +798,37 @@ Using Classic VPN for dynamic routing is no longer supported—with one exceptio
 - Usable for GCE or GKE pods to communicate to internet
 - Specific to a region
 - The Cloud NAT gateway implements **outbound NAT**, but **not inbound NAT:** hosts outside of your VPC network can only respond to connections initiated by your instances; they cannot initiate their own, new connections to your instances via NAT.
-- You can select a MInimum port per instances and increase the connection channels from a instance to outside. There are 64k available ports (TCP and UDP ports) so there is a limit of the amount of instances you may put to reach internet. You need to be conscious in the case of GKE because this number of ports are shared among all the pods running in the instance.
-- Two **allocations methods**:
-    - Auto
-        - f(n# ports/VM, VM and Network Tier
-        - scale in-out automatically
-        - No connection interruption when reducing de number of IPs
-    - Manual
-        - Don’t scale, it drops packet if needed
-        - Can use either Standard or Premium Network Tier (cannot be mixed in the same rule
-        - When removing IPs you choose:
-            - Break on-fly connections
-            - Drain
-- Can switch from auto ↔ manual but IPs are not preserved
+- You can select a Minimum port per instances and increase the connection channels from a instance to outside. There are 64k available ports (TCP and UDP ports) so there is a limit of the amount of instances you may put to reach internet. You need to be conscious in the case of GKE because this number of ports are shared among all the pods running in the instance.
 
-************Ports:************
+## IP allocations methods
+1. Auto
+    - f(n# ports/VM, VM and Network Tier)
+    - scale in-out automatically
+    - No connection interruption when reducing de number of IPs
+2. Manual
+    - Don’t scale, it drops packet if needed
+    - Can use either Standard or Premium Network Tier (cannot be mixed in the same rule)
+    - When removing IPs you choose:
+        - Break on-fly connections
+        - Drain
+NOTE: Can switch from auto ↔ manual but IPs are not preserved
+
+## Ports allocation
 
 1 IP ↔ 64512 ports
 
 Two modes:
-
-- SNAT (static):
+1. SNAT (static):
     - Select min port allocation per VM
     - Choose when all the VMs have similar internet using
-- DNAT (dynamic:
+2. DNAT (dynamic):
     - Select min & max ports per VM
-    - Increase gradually  (double each time the minimum) until reaching the max
+    - Increase gradually (double each time the minimum) until reaching the max
     - Cannot be used with Endpoint Independent Mapping (EIM)
 
 NOTE: When using with GKE, the address translation is performed at Node level
 
-Port reservation procedure:
+## Port reservation procedure
 
 1. Cloud NAT determines from internal IP of the VMs to do the NAT, through the ranges of subnet IP range where the NAT is located (it could include the alias ranges)
 2. Adjust the minimum # ports
@@ -814,13 +839,15 @@ Port reservation procedure:
     1. A NAT connectin of IP and port can use more than one external IP
         1. Static port allocation: source IP & port are fixed and can’t use more
         2. Dynamic port allocation: change with demand
+
+**Considerations:**
 - Closed connections are unstable for 120 secs after closing
 - Limits to unique destination (IP, port and protocol)
 - *Endpoint-Independent Mapping* means that if a VM sends packets from a given internal IP address and port pair to multiple different destinations, then the
 gateway maps all of those packets to the same NAT IP address and port pair, regardless of the destination of the packets.
 - With Private Google Access, Cloud NAT never performs NAT (network address translation) for traffic sent to the select external IP addresses of Google APIs and services. Google Cloud routes this traffic internally.
 
-### Creating a NAT
+## Creating a NAT
 
 - Go to Network services → Cloud NAT
 - Set a name
@@ -860,7 +887,7 @@ gateway maps all of those packets to the same NAT IP address and port pair, rega
     - Name
     - Location → List of the available DCs
     - Capacity → From 10 Gbps to 100 Gbps (the price increases with the capacity)
-    - Order a second redundandt interconnect
+    - Order a second redundant interconnect
     - Include company name and technical contact.
 - Creating a Partner Interconnect → It takes to a link to see the list of the partners by Area.
 
@@ -883,11 +910,11 @@ To share an Interconnect connection to on-premises infrastructure across multipl
 
 After you order an interconnect, Google sends you and the NOC (technical contact) an email with your LOA-CFAs (one PDF file per interconnect). You must send these LOA-CFAs to your vendor so that they can install your cross connects. If you don't, your interconnects won't get connected.
 
-### Dedicated Interconnect (DI)
+## Dedicated Interconnect (DI)
 
 Google Cloud and on-premises networks and supports 1-8 10 Gbps or 1-2 100 Gbps circuits per connection.
 
-### Partner Interconnect (PI)
+## Partner Interconnect (PI)
 
 The two main classes of Partner Interconnect are **Layer 2 and Layer 3 Partner Interconnect**. 
 
@@ -936,7 +963,7 @@ For PI, all the Cloud Routers must have a local ASN of 16550. DI and Cloud VPN d
 **Regional LB:**
 
 - Backend in one region
-- You require IPv4 onl
+- You require IPv4 only
 - Can work with Standard Tier of Network Service Tier
 
 ## Internal vs External LB
@@ -982,11 +1009,11 @@ Distribute traffic to instance inside GCP
 
 ## Choosing a LB
 
-![Untitled](images/gcp-pcne/Untitled%202.png)
+![Untitled](images/gcp-pcne/lb_selection_chart.png)
 
-![Untitled](images/gcp-pcne/Untitled%203.png)
+![Untitled](images/gcp-pcne/proxy_vs_passthrough.png)
 
-![Untitled](images/gcp-pcne/Untitled%204.png)
+![Untitled](images/gcp-pcne/client_ip_preservation.png)
 
 ### Other Notes:
 
@@ -1000,11 +1027,11 @@ Distribute traffic to instance inside GCP
     - Cloud Armor uses machine learning algorithms that can analyze network patterns and detect anomalies which can be blocked to deal with DDoS attack.
     - Increase the maximum autoscaling backend to accommodate the severe bursty traffic - This is a valid strategy for dealing with DDoS attack. Google will refund any cost inured during a DDoS attach caused by autoscalling of backend for enterprise customers.
 
-### Session Affinitiy
+## Session Affinitiy
 
 Session affinity, also known as session persistence, is a load balancing feature that directs client requests to the same backend instance for the duration of a session. This can be useful for applications that require clients to maintain a stateful connection to a particular instance, such as applications that use HTTP cookies or that rely on client IP address for authentication.
 
-**New terminology for Load balancer**
+## New terminology for Load balancer
 
 - Application Load Balancer
     - External
@@ -1034,9 +1061,9 @@ Session affinity, also known as session persistence, is a load balancing feature
     - Regional does no support IPv6
     - Global terminate locations in anywhere (small latency)
     - Proxy terminate the connections at GFE or envoy proxies
-    - Passthrough DO NOT terminate the client connections, the responses go directly to the client without going through the LB (Drect server return=DSR)
+    - Passthrough DO NOT terminate the client connections, the responses go directly to the client without going through the LB (Direct server return=DSR)
 
-### Overview of LB
+## Overview of LB
 
 Cloud Load Balancing can route traffic to:
 
@@ -1054,7 +1081,7 @@ Network Endpoint Groups (NEG)
     - **Private Service Connect:** contains a single endpoint. That endpoint that resolves to either a Google-managed regional API endpoint or a managed service published by using Private Service Connect.
     - **Hybrid connectivity:** points to Traffic Director services that run outside of Google Cloud. Add the hybrid connectivity NEGs to a hybrid load balancer backend. A hybrid connectivity NEG must only include endpoints outside Google Cloud. Traffic might be dropped if a hybrid NEG includes endpoints for resources within a Google Cloud VPC network.
 
-### Hybrid LB
+## Hybrid LB
 
 - Global external HTTP(S) load balancer
 - Global external HTTP(S) load balancer (classic)
@@ -1063,7 +1090,7 @@ Network Endpoint Groups (NEG)
 - External TCP Proxy Load Balancing
 - External SSL Proxy Load Balancing
 
-### Traffic management
+## Traffic management
 
 - Traffic management provides enhanced features to route load balancer traffic based on criteria that you specify.
 - With traffic management, you can:
@@ -1103,7 +1130,6 @@ Network Endpoint Groups (NEG)
     
     NOTE: Be aware, the VMs web server should have the same path you are setting in the LB, for example /dynamic
     
-
 ### With an Unmanaged Instance Group(UMIG)
 
 - Same as with MIG but you select an Unmanaged Instance Group
@@ -1140,7 +1166,10 @@ Network Endpoint Groups (NEG)
 
 ### Type of DNS in GCP
 
-![Untitled](images/gcp-pcne/Untitled%205.png)
+| Internal DNS | Private Zone | Public Zone |
+|---|---|---|
+| Internal DNS and Cloud DNS are different offerings.<br>Internal DNS names are names that Google Cloud creates automatically. | A private DNS zone contains DNS records that are only visible internally within your GCP network(s). | A public zone is visible to the internet.<br>Usually purchased through a Registrar. |
+| `[INSTANCE_NAME].[ZONE].c.[PROJECT_ID].internal` | Supports DNS Forwarding & DNS Peering | |
 
 ### Managed Zones in DNS
 
@@ -1155,7 +1184,6 @@ Network Endpoint Groups (NEG)
     - Select which VPCs can access this zone.
     - Create records with the internal IPs
     
-
 **Public zones**
 
 - Public zones provide authoritative DNS resolution to clients on the public internet.
@@ -1171,13 +1199,13 @@ Network Endpoint Groups (NEG)
     - Step 3. Import DNS records in Cloud DNS
     - Step 4: Update name servers to Cloud DNS name servers.
 
-**Supported Cloud DNS policies**
+## Supported Cloud DNS policies
 
 1. **Server policies** apply private DNS configuration to a VPC network.
 2. **Response policies** enable you to modify the behavior of the DNS resolver by using rules that you define.
 3. **Routing policies:** steer traffic based on geolocation or round robin.
 
-**Server policies**
+### Server policies
 
 - Use server policies to set up hybrid deployments for DNS resolutions.
 - Each VPC network can have one DNS server policy.
@@ -1185,14 +1213,14 @@ Network Endpoint Groups (NEG)
     - For workloads that use an on-premises DNS resolver, use an outbound server policy to set up DNS forwarding zones.
     - If you want on-premises workloads to resolve names on Google Cloud, set up an inbound server policy.
 
-**Response policies**
+### Response policies
 
 - A response policy is a Cloud DNS private zone concept that contains **rules instead of records.**
 - Lets you introduce customized rules in DNS servers within your network **that the DNS resolver consults during lookups.**
 - If a rule in the response policy affects the incoming query, it's processed (otherwise, the lookup proceeds normally).
 - The rules **enable you to return modified results to DNS clients**.
 
-**Routing policies**
+### Routing policies
 
 - DNS routing policies steer your traffic based on specific criteria.
 - Two types of DNS routing policies:
@@ -1211,7 +1239,7 @@ Network Endpoint Groups (NEG)
     --routing-policy-data="us-east1=$US_WEB_IP;europe-west2=$EUROPE_WEB_IP"
     ```
     
-    ![Untitled](images/gcp-pcne/Untitled%206.png)
+    ![Untitled](images/gcp-pcne/dns_geo.png)
     
     **Routing policy caveats**
     
@@ -1232,37 +1260,58 @@ Network Endpoint Groups (NEG)
     - Connect to VPC Network to share DNS services
     - NOTE this is not VPC Peering
 - DNS Peering is recommended to avoid outbound DNS forwarding from multiple VPCs which can cause problems with return traffic. DNS peering allows a single forwarding zone to be associated with a single VPC and then other VPCs to have their requests forwarded by DNS peering with the forwarding zone.
-    
-    ![Untitled](images/gcp-pcne/Untitled%207.png)
-    
 
+## Summary of the different config options:
+1.  🔐 Private Zone
+    - Cloud DNS Private zones support DNS services for a GCP Project. 
+    - VPCs in the same project can use the same name servers.
+2. 🔁 DNS Forwarding for Private Zones
+    - Overrides normal DNS resolution of the specified zones.
+    - Instead, queries for the specified zones are forwarded to the listed forwarding targets.
+3. 🔄 DNS Peering for Private Zones
+    - DNS peering lets you send requests for records that come from one zone’s namespace to another VPC network.
+4. 📤 DNS Policy Outbound
+    - When enabled in Cloud DNS, forwards all DNS requests for a VPC network to name server targets.
+    - Disables internal DNS for the selected Networks.
+5. 📥 DNS Policy Inbound
+    - Create an inbound DNS Policy to allow inbound connections from on-premises systems to use that network’s VPC name resolution order.
+    
 NOTE: Cloud DNS doesn't support zone transfers, so you cannot use zone transfers to synchronize DNS records with your on-premises DNS servers.
 
-### DNS Security
+## DNS Security
 
 - Protect Public domains zone from DNS spoofing
     - Public records DNSKEY with the public keys and signatures RRSIG to authenticate your zone’s content in the registrar setup
-    - In the public zone you shoud add the DS record in the domain
+    - In the public zone you should add the DS (delegation signer) record in the domain
     - Assure that your DNS clients is able to tackle with DNSSEc
-    - There is also a Transfer mode where you are moving the DNS, antes de importar los records
-        - Añadir los DS Records en el origen y actualizar los NS a Cloud DNS y luego ya activar el DNSSEC
-    
-    ![Untitled](images/gcp-pcne/Untitled%208.png)
+    - There is also a Transfer mode where you are moving the DNS, before importing the records
+        - Add the DS Records at the source and update the NS to Cloud DNS, and then activate DNSSEC
     
 
-********************Removing DNSSEC********************
+### Removing DNSSEC
 To resolve the issue of DNSSEC validating resolvers being unable to resolve names in your Cloud DNS-managed zone, you should perform the following steps:
 
-1. Check the state of your DNSSEC configuration in the Cloud DNS console: Make sure that you have correctly disabled DNSSEC for the zone, and that the change has taken
-effect.
+1. Check the state of your DNSSEC configuration in the Cloud DNS console: Make sure that you have correctly disabled DNSSEC for the zone, and that the change has taken effect.
 2. Check the state of the DS records: Confirm that the DS records have been properly removed from the zone file, and that they have been purged from the cache.
-3. Check the state of your domain registrar: Make sure that the domain registrar is not still
-configured to use DNSSEC, as this may be the source of the issue. You can check the DNSSEC settings for your domain at your domain registrar's control panel.
+3. Check the state of your domain registrar: Make sure that the domain registrar is not still configured to use DNSSEC, as this may be the source of the issue. You can check the DNSSEC settings for your domain at your domain registrar's control panel.
 4. Check the state of your name servers: Confirm that your name servers are properly configured and are returning the correct information for your zone.
-5. Check for other issues with your network: Consider checking for other issues with your
-network that may be affecting the resolution of your names, such as network congestion or routing issues.
+5. Check for other issues with your network: Consider checking for other issues with your network that may be affecting the resolution of your names, such as network congestion or routing issues.
 
-### **Querying order for DNS**
+### Summary of DNSSEC
+
+1️⃣ **Cloud DNS SECurity for Public Zones**
+- DNS zone for your domain must serve special DNSSEC records for public keys (DNSKEY) and signatures (RRSIG) to authenticate your zone’s contents.
+
+2️⃣ **How to enable and disable DNSSEC**
+- Activate or Disable DNSSEC at your domain registrar by adding a DS record in the zone to be validated.
+When DNSSEC is active, clients must use a resolver that supports DNSSEC.
+
+3️⃣ **Migrate Domain to Cloud DNS with DNSSEC**
+- Turn off DNSSEC and re-enable after the transfer.
+Understand how to use the Google Cloud DNS DNSSEC “Transfer” and “Import” features.
+
+
+## Querying order for DNS
 
 1. DNS Server Policy forwarding rule
 2. Private DNS forwarding zones
@@ -1270,14 +1319,9 @@ network that may be affecting the resolution of your names, such as network cong
 4. Compute engine internal DNS
 5. Queries public zones
 
-**Other notes:**
+### Other notes about DNS
 
-- Shared VPC⇒ Recommended to create the zone inthe host project and then add the authorized networks
-
-### Other notes
-
-- Cloud DNS also supports many other capabilities including DNS forwarding and peering, but requires valid configuration to support these DNS scenarios. Separate managed zones must be created for different domains, public vs private DNS, DNS peering, or DNS forwarding.
-- Cloud DNS also allows for DNS server policies to be created for VPCs that allow inbound or outbound forwarding of DNS requests. For outbound DNS forwarding, both outbound DNS server policies and forwarding zones can be used. When forwarding DNS requests to on-premises DNS servers, forwarding zones are the recommended approach.
+- Shared VPC⇒ Recommended to create the zone in the host project and then add the authorized networks
 
 # Cloud Content Delivery Network (CDN)
 
