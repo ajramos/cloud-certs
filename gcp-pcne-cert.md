@@ -1319,7 +1319,7 @@ Understand how to use the Google Cloud DNS DNSSEC “Transfer” and “Import�
 4. Compute engine internal DNS
 5. Queries public zones
 
-### Other notes about DNS
+## Other notes about DNS
 
 - Shared VPC⇒ Recommended to create the zone in the host project and then add the authorized networks
 
@@ -1337,52 +1337,74 @@ Understand how to use the Google Cloud DNS DNSSEC “Transfer” and “Import�
 - Delivers the content the closest to the customers.
 - For enabling it, in the Cloud LB Backend configuration, check the flag “Enable Cloud CDN)
 
-### Cloud CDN Cache Control
+## Cloud CDN Cache Control
 
 - Add Origin to the Cloud CDN
     - You have a summary setting and monitoring tool
 - Complete Request URI is used as the Cache key
-- We can create custom cache key to improve cache hit ratio
-- Cache Control by priority
+- We can create custom cache key to improve cache hit ratio (ex. remove the host from the URL )
+- Cache Control setting (set-cache, for time sensitive content)by priority:
     - s-maxage → shared caches
     - maxage
     - Expires
-- You have an invalidation tool to remove keys from the cache: only one per minute so try to use folders to do it.
+- You have a cache invalidation tool to remove keys from the cache: only one per minute so try to use folders to do it.
 - Invalidation removes content from the Cloud CDN distributed cache servers before the cache entry expires. Invalidation is eventually consistent.
-- Byte Range request
-    - Only caches the changes of the files (differential changes only)
+- Byte Range request: Only caches the changes of the files (differential changes only)
 
-![Untitled](images/gcp-pcne/Untitled%209.png)
+## CDN with Signed URLs
 
-### CDN with Signed URLs
-
-- WIth a command or your own code
-    - gcloud compute signed-url it requires a key-name and key-file
+- With a command or your own code
+    - `gcloud compute signed-url` requires a key-name and key-file
         
-        ![Untitled](images/gcp-pcne/Untitled%2010.png)
+        ```sh
+        gcloud compute signed-url create gs://[BUCKET]/[OBJECT] \
+            --duration=[DURATION] \
+            --key-file=[KEY_FILE] \
+            --key-name=[KEY_NAME]
+        ```
         
-    - estos parametros se pueden obtener de la configuración del “origen” en el Cloud CDN Console
-        - La clave la podemos generar con la interfaz o ponerla nosotros
-        - Establecer el tiempo en el que estará disponible esta información.
-    - Esto permite que solo la CDN pueda acceder al contenido del bucket para ello hay que darle al service account the CLoud CDN el permiso de objectViewer
+    - These parameters can be obtained from the "origin" configuration in the Cloud CDN Console.
+    - The key can be generated using the interface or provided by us.
+    - Set the time during which this information will be available.
+    - This allows only the CDN to access the content of the bucket; for this, you must grant the Cloud CDN service account the `objectViewer` permission.
 
-![Untitled](images/gcp-pcne/Untitled%2011.png)
+### Summary CDN and Signing URLs
 
-### Cache Modes
+1. **Cloud CDN Keys for Signing URLs**  
+   Enable support for Cloud CDN signed URLs by creating one or more keys on a Cloud CDN-enabled backend or bucket.
 
-| Cache mode | Behavior |
-| --- | --- |
-| CACHE_ALL_STATIC | Automatically caches successful responses with static content that aren't https://cloud.google.com/cdn/docs/caching#non-cacheable_content. Origin responses that set valid caching directives are also cached.
+2. **Maxage setting for Signed URLs**  
+   The length of time Cloud CDN will cache a response to a signed URL request.  
+   `--signed-url-cache-max-age [max-age]`
+
+3. **Cloud CDN Service Account**  
+   Grant bucket viewer role to  
+   `service-PROJECT_NUM@cloud-cdn-fill.iam.gserviceaccount.com`
+
+## Cache Modes
+
+### Cache mode: CACHE_ALL_STATIC 
+Automatically caches successful responses with static content that aren't https://cloud.google.com/cdn/docs/caching#non-cacheable_content. Origin responses that set valid caching directives are also cached.
+
 This is the default behavior for Cloud CDN-enabled backends created by using the Google Cloud CLI or the REST API.
-CACHE_ALL_STATIC will cache static content based on Content-Type/MIME matching standard static types such as Javascript, CSS, photos, video, and audio, unless Cache-Control metadata for the associated object in Cloud Storage has a private or no-store directive. 
-When the mode is CACHE_ALL_STATIC, a configuration parameter called Default TTL, which defaults to 1h, sets the lifetime for static file types that don’t have Cache-Control specified expiry time. If they do have Cache-Control specified expiry time, they use the specified value. Other file types that are not in the set identified as static would be cached or not based on Cache-Control metadata normally. |
-| USE_ORIGIN_HEADERS | Requires successful origin responses to set https://cloud.google.com/cdn/docs/caching#cacheability. Successful responses without these directives are forwarded from the origin.
-FORCE_CACHE_ALL will enforce caching of all objects regardless of Cache-Control metadata and will also use the Default TTL value for expiry time. |
-| FORCE_CACHE_ALL | Unconditionally caches successful responses, overriding any cache directives set by the origin. This mode is not appropriate if the backend serves private, per-user content, such as dynamic HTML or API responses.
-USE_ORIGIN_HEADERS strictly uses the Cache-Control headers for controlling the caching. In addition to the Default TTL parameter there are also Max TTL and Client TTL configuration parameters that can adjust the behavior in the CACHE_ALL_STATIC and FORCE_CACHE_ALL modes.
- |
 
-### CDN Interconnect
+CACHE_ALL_STATIC will cache static content based on Content-Type/MIME matching standard static types such as Javascript, CSS, photos, video, and audio, unless Cache-Control metadata for the associated object in Cloud Storage has a private or no-store directive. 
+
+When the mode is CACHE_ALL_STATIC, a configuration parameter called Default TTL, which defaults to 1h, sets the lifetime for static file types that don’t have Cache-Control specified expiry time. If they do have Cache-Control specified expiry time, they use the specified value. Other file types that are not in the set identified as static would be cached or not based on Cache-Control metadata normally.
+
+### Cache mode: USE_ORIGIN_HEADERS
+Requires successful origin responses to set https://cloud.google.com/cdn/docs/caching#cacheability. Successful responses without these directives are forwarded from the origin.
+
+### Cache mode: FORCE_CACHE_ALL 
+It will enforce caching of all objects regardless of Cache-Control metadata and will also use the Default TTL value for expiry time.
+
+FORCE_CACHE_ALL Unconditionally caches successful responses, overriding any cache directives set by the origin. This mode is not appropriate if the backend serves private, per-user content, such as dynamic HTML or API responses.
+
+NOTE:
+USE_ORIGIN_HEADERS strictly uses the Cache-Control headers for controlling the caching. In addition to the Default TTL parameter there are also Max TTL and Client TTL configuration parameters that can adjust the behavior in the CACHE_ALL_STATIC and FORCE_CACHE_ALL modes.
+
+
+## CDN Interconnect
 
 CDN Interconnect lets you:
 
@@ -1445,14 +1467,14 @@ Typical use cases for CDN Interconnect
 
 Premium ⇒ It arrives to google pretty much faster
 
-Standard ⇒ It arrives in more hopes to google (not recommended, only for very sensitive to cost customers)
+Standard ⇒ It arrives in more hops to google (not recommended, only for very sensitive to cost customers)
 
 ## VPC Flow Logs
 
 - VPC flow logs can be enabled and configured on a subnet level and capture a maximum of 10% of traffic. That amount can be further reduced by sampling and/or filtering and is aggregated over a configurable period which defaults to 5 seconds. Log entries are created for the aggregate traffic from the period and information about the source and destination IP addresses and ports, the protocol, and other useful information is provided in the log entry.
 - **Configure logs** to expose the following fields:
 
-[https://cdn.qwiklabs.com/6nrpXe5u7V6q3dZayKaIbaJT939PCrnt2l1whV4BfRY%3D](https://cdn.qwiklabs.com/6nrpXe5u7V6q3dZayKaIbaJT939PCrnt2l1whV4BfRY%3D)
+![Flow logs config](images/gcp-pcne/flow_logs.png)
 
 The purpose of each field is explained below.
 
@@ -1462,7 +1484,7 @@ The purpose of each field is explained below.
 
 This allows you to trade off longer interval updates for lower data volume generation which lowers logging costs. 
 
-From the same subred details page you can access to the log explorer.
+From the same subnet details page you can access to the log explorer.
 
 ## Firewall Rules Logging
 
@@ -1483,7 +1505,7 @@ From the same subred details page you can access to the log explorer.
 - As with most networking services in Google Cloud there are logs collected related to the functionality of the HTTP(S) Load Balancer.
 - These logs also include logs related to functionality of the Cloud CDN and Cloud Armor which are tightly integrated with the HTTP(S) LB.
 - Backend buckets will provide logs automatically, but backend services require configuration to enable logs and set the logs sampling rate.
-    - Each Cloud CDN request is automatically logged within Google Cloud. These logs will indicate a “Cache hit” or “Cache miss” status for each HTTP request of the load balancer. You will explore such logs in the next lab.
+- Each Cloud CDN request is automatically logged within Google Cloud. These logs will indicate a “Cache hit” or “Cache miss” status for each HTTP request of the load balancer. 
 
 ## VPN Monitoring
 
@@ -1506,7 +1528,12 @@ faster and easier](https://cloud.google.com/blog/products/networking/perfkit-ben
 
 ## Roles in Monitoring
 
-![Untitled](images/gcp-pcne/Untitled%2012.png)
+| **Role ID/Role Name** | **Description** |
+|---|---|
+| **Monitoring Viewer**   | Gives you read-only access to Monitoring in the Google Cloud Console and API. |
+| **Monitoring Editor**   | Gives you read-write access to Monitoring in the Google Cloud Console and API, and lets you write monitoring data to a Workspace. |
+| **Monitoring Admin**  | Gives you full access to Monitoring in the Google Cloud Console. |
+| **Monitoring Metric Writer** | Permits writing monitoring data to a Workspace; doesn't permit access to Monitoring in the Google Cloud Console. For service accounts. |
 
 ## Network Intelligence Center
 
@@ -1521,7 +1548,7 @@ faster and easier](https://cloud.google.com/blog/products/networking/perfkit-ben
 - [Shadowed firewall rule](https://cloud.google.com/network-intelligence-center/docs/firewall-insights/concepts/insights-categories-states#shadowed-firewall-rules) insights, which are derived from data about how you have configured your firewall rules. A shadowed rule shares attributes—such as IP address ranges—with other rules of higher or equal priority.
 - [Overly permissive rule](https://cloud.google.com/network-intelligence-center/docs/firewall-insights/concepts/insights-categories-states#overly-permissive-rules) insights, including each of the following:
     - `Allow` rules with no hits
-    - `Allow` rules that are unused based on trend analysis ([preview](https://cloud.google.com/products#product-launch-stages))
+    - `Allow` rules that are unused based on trend analysis
     - `Allow` rules with unused attributes
     - `Allow` rules with overly permissive IP addresses or port ranges
     - `Deny` rule insights with no hits during the [observation period](https://cloud.google.com/network-intelligence-center/docs/firewall-insights/how-to/configure-observation-period#observation-period).
@@ -1579,7 +1606,7 @@ Google brings with one tool that help us to troubleshoot the connectivity betwee
 - You can set an organization policy to inherit the parent organization policy or to use the Google-managed default behavior.
 - Deny overrides allow.
 
-![Untitled](images/gcp-pcne/Untitled%2013.png)
+![Untitled](images/gcp-pcne/org_policy_example.png)
 
 - **Restrict network configuration - apply org policies on appropriate folders to:**
     - Control which projects can use Shared VPCs (constraints/compute.restrictSharedVpcHostProjects)
@@ -1595,7 +1622,7 @@ Google brings with one tool that help us to troubleshoot the connectivity betwee
 
 The organization restrictions feature lets you prevent data exfiltration through phishing or insider attacks. For managed devices in an organization, the organization restrictions feature restricts access only to resources in authorized Google Cloud organizations.
 
-![Untitled](images/gcp-pcne/Untitled%2014.png)
+![Untitled](images/gcp-pcne/org_restrictions.png)
 
 # VPC Service Controls
 
@@ -1605,7 +1632,7 @@ Provides an extra layer of security defense for Google Cloud services that is in
 
 VPC Service Controls is not designed to enforce comprehensive controls on metadata movement.
 
-VPC Service Controls lets you define security policies that prevent access to Google-managed services outside of a trusted perimeter, block access to data from untrusted locations, and mitigate data exfiltration risks. You can use VPC Service Controls for the following use cases:
+VPC Service Controls lets you define security policies that **prevent access to Google-managed services outside of a trusted perimeter, block access to data from untrusted locations, and mitigate data exfiltration risks**. You can use VPC Service Controls for the following use cases:
 
 - [Isolate Google Cloud resources and VPC networks](https://cloud.google.com/vpc-service-controls/docs/overview#isolate) into service perimeters
 - [Extend perimeters to on-premises networks](https://cloud.google.com/vpc-service-controls/docs/overview#hybrid_access) to authorized VPN or Cloud Interconnect
