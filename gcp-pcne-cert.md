@@ -47,6 +47,27 @@ An SSH key consists of the following files:
 
 Therefore, you can control which instances a user can access by changing the public SSH key metadata for one or more instances.
 
+# Migrating VMs
+
+## Requirements
+- The migration is a "cold" migration. The VM must be stopped before it can be migrated.
+- The VM must not be in an instance group or network endpoint group (NEG):
+    - if in unmanaged instance group or NEG, you should take it out from there.
+    - If in MIG, you cannot move it, you should create a template and launche it in the new VPC.
+
+## Supported migrations
+1. From legacy network to a VPC network in the same project.
+2. From one VPC network to another VPC network in the same project.
+3. From one subnet of a VPC network to another subnet of the same network.
+4. From a service project network to the shared network of a Shared VPC host project.
+> NOTE: the VM stays in the region and zone where it was before. Only the attached network changes
+
+## Limitations
+- You cannot migrate a VM interface to a legacy network.
+- The MAC address allocated to the NIC will change during the migration. This could impact on services coupled with MAC addresses (e.g. somelicense agreements)
+- The internal IP address of your instance must change to the target subnet IP range, you can keep it if the IP range is the same and is not used.
+- The external IP can be kept, but you you must have the compute.subnetworks.useExternalIp permission on the target network, and the target network cannot have external IP addresses disabled by the constraints/compute.vmExternalIpAccess constraint
+
 # IAM Roles
 
 The **Compute Network Admin** role grants access to create, modify, and delete networking resources, except for firewall rules and SSL certificates. 
@@ -92,14 +113,13 @@ A Virtual Private Cloud (VPC) network is a virtual version of a physical network
 - VPC must have minimum one subnet
 - Subnet belongs to one single region in GCP
 
-Use the Default Network is a bad practice because of many reasons so that it is better to deactivate its use at the Org Policy Level (_Skip Default Network Creation Org Policy_)
-
+Use the Default Network is a bad practice because of many reasons so that it is better to deactivate its use at the Org Policy Level (_Skip Default Network Creation Org Policy_):
 - Lots of unnecessary subnets
 - Same name – confusion
 - Broad ranges in IP address
 - Can not delete subnet
 - Default Firewall rules are broad
-- Can not go beyond /16
+- Can not go beyond /16 (start with a /20)
 
 There are four reserved IP addresses in each subnet's primary IPv4 range. There are no reserved IP addresses in the secondary IPv4 ranges.
 
@@ -109,6 +129,12 @@ There are four reserved IP addresses in each subnet's primary IPv4 range. There 
 | Default gateway | Second address in the primary IP range for the subnet | 10.1.2.1 in 10.1.2.0/24 |
 | Second-to-last address | Second-to-last address in the primary IP range for the subnet that is reserved by Google Cloud for potential future use | 10.1.2.254 in 10.1.2.0/24 |
 | Broadcast | Last address in the primary IP range for the subnet | 10.1.2.255 in 10.1.2.0/24 |
+
+When configuring VPC networks and their subnetworks, you can expand the primary range of a subnet (to max /16 size in auto networks or to the size supported by the IP block in custom networks) as long as the expansion does not introduce overlap to other existing subnets. 
+When doing such expansion, any firewall rules depending on the older range should be updated. 
+
+Deleting a subnet first requires deleting all VMs in that subnet.
+
 
 ## Subnets and IPv6 support
 
@@ -131,7 +157,7 @@ There are four reserved IP addresses in each subnet's primary IPv4 range. There 
 **Assigning IPv6 address ranges to a VPC network**
 
 - To enable internal IPv6 on a subnet, you must first assign an internal IPv6 range on the VPC network.
-- A /48 ULA range from within fd20:/20 is assigned to the network.
+- A /48 ULA (Unique Local Addresses) range from within fd20:/20 is assigned to the network.
     - All internal IPv6 subnet ranges in the network are assigned from this /48 range.
     - The /48 range can be automatically assigned, or you can select a specific range from within fd20::/20.
 
@@ -181,11 +207,13 @@ NOTE: When you want to expand a subred IP range, it only accept superset of the 
 - Are created when a subnet is created.
 - Enable VMs on same network to communicate.
 - Types:
-    - System-generated
+    1. System-generated
         - default
         - subnets
-    - Custom
-    - Peering
+    2. Custom
+    3. Peering
+    4. NCC (Network Connectivity Center) => a subnet IP range in a VPC spoke 
+    5. Policy based routes apply to packets based on source IP, destination IP, protocol, or a combination thereof.
 
 **System-generated default routes**
 
@@ -231,7 +259,7 @@ NOTE: When you want to expand a subred IP range, it only accept superset of the 
 - The controller is kept informed of all routes from the network's routing table.
 - Route changes are propagated to the VM controllers.
 - **Create custom static routes**
-    - Manually, by using either the Google Cloud console, gloud CLI compute routes create command, or the routes.insert API.
+    - Option 1: Manually, by using either the Google Cloud console, gloud CLI compute routes create command, or the routes.insert API.
         - Set a name
         - Set a VPC
         - Select next hop:
@@ -242,7 +270,8 @@ NOTE: When you want to expand a subred IP range, it only accept superset of the 
             - Specify IP address
             - Specify a VPN tunnel
             - Specify a forwarding rule of internal TCP/UDP LB
-    - Automatically, by using either the console to create a Classic VPN tunnel with policy-based routing or as a route-based VPN.
+    - Option 2: Automatically, by using either the console to create a Classic VPN tunnel with policy-based routing or as a route-based VPN.
+    NOTE: You can limit which VMs would use a custom route by adding a tag to the custom route that matches a tag on the appropriate VMs.
 
 **Dynamic routes**
 
@@ -253,13 +282,12 @@ NOTE: When you want to expand a subred IP range, it only accept superset of the 
     - Partner Interconnect
     - HA VPN tunnels
     - Classic VPN tunnels that use dynamic routing
+    - NCC Router appliances
 - Routes apply to VMs according to the VPC network's dynamic routing mode.
 
 ### Route Order
 
-Routes are global within the route table, each route associate it to a VPC network
-
-All the packets pass through a virtual router
+Routes are global within the route table, each route associate it to a VPC network. All the packets pass through a virtual router
 
 Routes Order:
 
@@ -281,15 +309,24 @@ Routes Order:
 | Custom Static  | - IP range broader than a subnet IP range<br>- IP range does not overlap with subnet IP range | One of:<br>- Instance by name<br>- Instance by IP address<br>- Cloud VPN tunnel | Yes | Either:<br>- All instance in network<br>- Specific instance in network identified by network tag |
 | System-generated | - Internet Networks<br>- Default Gateway - external networks | Internal Subnet Gateway | Yes, delete VPC subnet<br>Yes, Isolate VPC traffic | - All instances in network |
 
+NOTE: ProxyVM Configuration to inspect egress traffic: 
+    1. Delete the system-generated default route
+    2. Create a custom route to destination 0.0.0.0/0
+    3. Specify the next hop as the proxy VM
+    4. Configure the proxy VM to enable IP forwarding.
+
+
 # Cloud Router
 
 - Use BGP which requires a ASN to idenitify different domains
     - there are some private ASN so that it identifies the traffic is routing
     - Once BGP session is established between two routers the BGP routes are shared (dynamic routes)
     - The subnets should not overlap
-- Two modes (configured at the VPC):
+- Two routing modes (configured at the VPC):
     - **Regional (default)**: Only share the routes on the region where the router has been provisioned
     - **Global**: Share all the routes in the subnets to and from all regions with a single VPN or interconnect or Cloud Router
+        NOTE: However, the average latency will not be as low as if there are separate Cloud VPN gateways and Cloud Routers per region
+
 - Cloud Routers have **default and custom route advertisement modes** that can be set for the router as a whole or separately for each BGP session.
     - The **default advertisement mode** will advertise all subnets in the same region when the VPC in the Cloud Router is set to regional dynamic routing mode, or all subnets in all regions when the VPC is set to global dynamic routing mode.
     - When in **custom route advertisement mode**, the Cloud Router can be configured to advertise a specified set of IP ranges. In addition, Cloud Router can also be configured to advertise all subnets in the region or across all regions, based on the VPC's dynamic routing mode.
@@ -388,8 +425,8 @@ Outbound or egress traffic from a virtual machine is subject to **maximum networ
 
 - Connect to VPCs: no matter whether in the same project, different projects or different organizations
 - No central management → It needs to be activated at both projects
-- VPC Managed by individual project team & control all ingress egress traffic
 - Requires peering in both directions.
+- VPC Managed by individual project team & control all ingress egress traffic
 - Compute Engine internal DNS names created in a network are not accessible to peered networks. The IP address of the VM should be used to reach the VM instances in peered network.
 - Cannot overlap CIDR blocks, the peering is denied if this happens
 - All subnets routes are shared accross the peered connection
@@ -420,46 +457,82 @@ Outbound or egress traffic from a virtual machine is subject to **maximum networ
 
 Four scenarios for configuring private access:
 
-1. **Private Google Access** 
-    - When we are accessing Google APIs or services using their private IPs instead of the external domains (for example using gsutil to access a GCS bucket in a VM with internal IP only).
-    - This **configuration is performed at subnet level**, and it is a flag to be set in the configuration of the subnet (off by default): Private Google Access
-    - By default, when a Compute Engine VM lacks an external IP address assigned to its network interface, it can only send packets to other internal IP address destinations. You can allow these VMs to connect to the set of external IP addresses used by Google APIs and services by enabling Private Google Access on the subnet used by the VM's network interface.
-    - Use `private.googleapis.com` to access Google APIs and services by using a set of IP addresses only routable from within Google Cloud. Choose this option when:
-        - You don't use VPC Service Controls.
-        - You do use VPC Service Controls, but you also need to access Google APIs and services that are not supported by VPC Service Controls.
-    - Use `restricted.googleapis.com` to access Google APIs and services by using a set of IP addresses only routable from within Google Cloud.
-        - Choose when you **only** need access to Google APIs and services that **are** supported by VPC Service Controls.
-        - The `restricted.googleapis.com` domain does not permit access to Google APIs and services that do not support VPC Service Controls.
-2. **Private Service Access**
-    - When we are accessing a service within Google cloud from internal IPs. (For example using internal access to access a Cloud SQL instance)
-    - There are only some few services compatible with Private Service Access:
-        - Cloud SQL
-        - Memorystore
-        - Google Kubernetes Engine (GKE) control plane
-        - Filestore
-        - Data Fusion
-        - Vertex AI Workbench (Notebooks)
-        - AlloyDB
-        - Cloud Functions (some configs)
-        - Other Google-managed services that require private access
-    - Basically you create a VPC Peering of one VPC that belongs to Google (Control plane, where Google deploys the service,in this case the Cloud SQL instances) and one of your networks in your project. If you go to the VPC details you can see this in the VPC Network Peering tab.
-    - Then in the tab Private Service Connections, you can see the range of the IPs that could be use by this services (this Range has been set during the Cloud SQL instance configuration)
-3. **Serverless VPC Access**
-    - When you access to a Google deployed services VPC (Control Plane) from  serverless services (AKA Cloud Run, App Engine or Google Functions)
-    - Go to VPC Networks → Serverless VPC Access → Create a connector
-        - Choose a region and a network
-        - Establish IP Range
-        - Establish scalability params (min 2 and max 10 n# of instances)
-    - When creating the Cloud functions you can select the connector to use for calling the service.
-4. **Private Service Connect (PSC)**
-    - PSC allows *consumers* to access *managed services* privately from inside their VPC network. Similarly, it allows managed service *producers* to host these services in their own separate VPC networks and offer a private connection to their consumers.
-    - Consumers can use their own internal IP addresses to access services without leaving their VPC networks or using external IP addresses. Traffic remains entirely within Google Cloud. PSC provides service-oriented access between consumers and producers with granular control over how services are accessed.
-    - PSC supports access to the following types of managed services:
-        - Published VPC-hosted services, which include the following:
-            - [Google published services](https://cloud.google.com/vpc/docs/private-service-connect-compatibility#google-services), such as Apigee or the GKE control plane
-            - [Third-party published services](https://cloud.google.com/vpc/docs/private-service-connect-compatibility#third-party-services) provided by Private Service Connect partners
-            - Intra-organization [published services](https://cloud.google.com/vpc/docs/private-service-connect#published-services), where the consumer and producer might be two different VPC networks within the same company
-            - [Google APIs](https://cloud.google.com/vpc/docs/private-service-connect-compatibility#google-apis-global), such as Cloud Storage or BigQuery
+## Private Google Access
+- When we are accessing Google APIs or services using their private IPs instead of the external domains (for example using gsutil to access a GCS bucket in a VM with internal IP only).
+- This **configuration is performed at subnet level**, and it is a flag to be set in the configuration of the subnet (off by default): Private Google Access
+- By default, when a Compute Engine VM lacks an external IP address assigned to its network interface, it can only send packets to other internal IP address destinations. You can allow these VMs to connect to the set of external IP addresses used by Google APIs and services by enabling Private Google Access on the subnet used by the VM's network interface.
+- Use `private.googleapis.com` to access Google APIs and services by using a set of IP addresses only routable from within Google Cloud. Choose this option when:
+    - You don't use VPC Service Controls.
+    - You do use VPC Service Controls, but you also need to access Google APIs and services that are not supported by VPC Service Controls.
+- Use `restricted.googleapis.com`(199.36.153.4/30)  to access Google APIs and services by using a set of IP addresses only routable from within Google Cloud.
+    - Choose when you **only** need access to Google APIs and services that **are** supported by VPC Service Controls.
+    - The `restricted.googleapis.com` domain does not permit access to Google APIs and services that do not support VPC Service Controls.
+    - Use this for Private Google Access for on-premises host.
+- Private Google Access has no effect on instances that have external IP addresses.
+### Caveats
+    - Legacy Networks not supported
+    - Proper Google APIs should be enabled
+    - The VPC network must have appropriate routes and egress firewalls defined
+    - Either you use `private.googleapis.com` or `restricted.googleapis.com`, DNS records should be created to direct traffic to the IP addresses that are associated to those domains.
+    - If using IPv6: 1) The Vm should have a /96 IPv6 and the sw running in the VM must send packets from that shourse. 2) Use the default domains
+
+## Private Service Access
+- When we are accessing a service within Google cloud from internal IPs. (For example using internal access to access a Cloud SQL instance)
+- Basically you create a VPC Peering of one VPC that belongs to Google (Control plane, where Google deploys the service,in this case the Cloud SQL instances) and one of your networks in your project. If you go to the VPC details you can see this in the VPC Network Peering tab.
+- Then in the tab Private Service Connections, you can see the range of the IPs that could be use by this services (this Range has been set during the Cloud SQL instance configuration)
+
+### Compatible services
+There are only some few services compatible with Private Service Access:
+- Cloud SQL
+- Memorystore
+- Google Kubernetes Engine (GKE) control plane
+- Filestore
+- Data Fusion
+- Vertex AI Workbench (Notebooks)
+- AlloyDB
+- Cloud Functions (some configs)
+- Other Google-managed services that require private access
+
+## Serverless VPC Access
+- When you access to a Google deployed services VPC (Control Plane) from  serverless services (AKA Cloud Run, App Engine Standard or Google Functions)
+- Go to VPC Networks → Serverless VPC Access → Create a connector
+    - Choose a region and a network
+    - Establish IP Range
+    - Establish scalability params (min 2 and max 10 n# of instances)
+- When creating the Cloud functions you can select the connector to use for calling the service.
+
+## Private Service Connect (PSC)
+- PSC allows *consumers* to access *managed services* privately from inside their VPC network. Similarly, it allows managed service *producers* to host these services in their own separate VPC networks and offer a private connection to their consumers.
+- Consumers can use their own internal IP addresses to access services without leaving their VPC networks or using external IP addresses. Traffic remains entirely within Google Cloud. PSC provides service-oriented access between consumers and producers with granular control over how services are accessed.
+- Consumer POV, it connects to an endpoint within the VPC network (hence an internal IP address) and maps to the service attachment in the producer VPC network. The service attachment receives requests redirected from the PSC endpoint and sends it to a forwarding rule, and the forwarding rule to the appropiate VM or service.
+- All communications between the consumer VPC network and service producer VPC network must be initiated by the consumer.
+- Producers can choose to deploy a multi-tenant model, where your VPC network contains services that are used by multiple consumer VPCs. The consumer networks can have overlapping subnet ranges.
+- Service producers can scale services to as many VM instances as required, without asking consumers for more IP addresses.
+- Service producers don’t need to change firewall rules based on the subnet ranges in the consumer VPC networks.
+- PSC supports access to the following types of published VPC-hosted services, which include the following:
+    - [Google published services](https://cloud.google.com/vpc/docs/private-service-connect-compatibility#google-services), such as Apigee or the GKE control plane
+    - [Third-party published services](https://cloud.google.com/vpc/docs/private-service-connect-compatibility#third-party-services) provided by Private Service Connect partners
+    - Intra-organization [published services](https://cloud.google.com/vpc/docs/private-service-connect#published-services), where the consumer and producer might be two different VPC networks within the same company
+    - [Google APIs](https://cloud.google.com/vpc/docs/private-service-connect-compatibility#google-apis-global), such as Cloud Storage or BigQuery
+
+### Using a LB
+
+You can use a LB to access a PSC service that includes some perks:
+    - Assign DNS to these internal IPs (or even Google services) for a better terminology
+    - Control which traffic goes to which endpoint demonstrating traffic stays within GCP
+    - Log requests by enabling LB logging
+    - Enable data residency in transit by connecting to regional endpoints for Google APIs from workloads in the same region.
+    - With PSC and consumer HTTP(S) service controls that use a global external Application LB, consumers connect to an external IP address. PSC uses a network endpoint group to route the request to the service producer.
+
+### Private Service Connect Interfaces
+- A PSC interface is a special type of network interface that refers to a network attachment. 
+- A PSC Interface enables services in a producer VPC network to securely reach resources and destinations within a consumer VPC network. 
+- Producer and consumer networks can be in different projects and organizations.
+- If the service consumer accepts the connection, GCP allocates the interface an IP address from a subnet in the consumer VPC network that's specified by the network attachment. The VM of the PSC interface has a second standard network interface that connects to the producer's VPC network.
+- A connection between a PSC interface and a network attachment is similar to the connection between a PSC endpoint and a service attachment, but it has two key differences:
+    1. A PSC interface lets a producer network initiate connections to a consumer network (managed service egress), while an endpoint lets a consumer network initiate connections to a producer network (managed service ingress).
+    2. A PSC interface connection is transitive. This means that a producer network can communicate with other networks that are connected to the consumer network.
+- A common use case is when a managed service needs to securely access data within a customer's VPC network. 
 
 # Cloud Identity-Aware Proxy (IAP)
 
@@ -587,7 +660,7 @@ Two types of networking models:
     - Pods connect through a **network gateway** and are assigned a unique private IP address within the cluster subnet. The network gateway manages communication between the pods and other services in the network. This setup is easier to configure than VPC-native, but it can be less scalable and have lower performance in large and complex networks.
     - Uses routes to pass traffic to the K8s network, count against custom route quota.
 - **VPC-native**: 
-    - The ranges are taken from the alias IP Ranges.
+    - The ranges are taken from the alias IP Ranges. You can either pre-create the secondary ranges or simply specify them when creating the cluster
     - Ability to customize pods per node. When selecting the value for the number of pods per node, the value should be between 8 and 110 pods per Node. In order to provide 15 IP Addresses and to support rolling updates of pods, we need at least 30 IP addresses assigned. Using a /27 provides 32 IP addresses for pods per node.
     - Pod IP addresses are taken from the cluster subnet's secondary IP address range for Pods. Unless you set a different [maximum number of Pods per node](https://cloud.google.com/kubernetes-engine/docs/how-to/flexible-pod-cidr), GKE allocates a `/24` [alias IP range](https://cloud.google.com/vpc/docs/alias-ip) (256 addresses) to each node for the Pods running on it. On each node, those 256 alias IP addresses are used to support up to 110 Pods.
     - Services IP range is distinctly reserved independent of the pod address range.
@@ -613,10 +686,12 @@ Three options:
 1. **Pre-create the IP address for Clusters**
 Node, Pod & services IP ranges must be pre-defined in the Host Project prior to the Service Project GKE cluster creation
 2. Only supported by VPC-Native Clusters
-3. Roles for GKE Service accounts. The permissions to grant to the GKE Service accounts (belonging to the service project) to use the VPC Networks resources. 
-    1. Host service Agent User (`roles/container.hostServiceAgentUser`)
+3. Roles for GKE Service accounts. The permissions to grant to the GKE Service accounts  (belonging to the service project: service-service-project-num@container-engine-robot.iam.gserviceaccount.com) to use the VPC Networks resources. 
+    1. Host Service Agent User (`roles/container.hostServiceAgentUser`)
     2. Network user role (`roles/compute.networkUser`) 
-    NOTE: this roles must be assigned in the Host Project.
+    NOTE: this roles must be assigned in the Host Project .
+
+NOTE: This will allow the cluster to create an ALB for an ingress declared in the cluster.
 
 ## Network Policy
 
@@ -707,10 +782,12 @@ ranges are used *only* to create routes in your VPC network to peer resources.
 
 The Classic VPN gateway local and remote selectors should match the peer VPN gateway remote and local selectors.
 
-Using Classic VPN for dynamic routing is no longer supported—with one exception. To connect to VPN gateway software running inside a Compute Engine instance, you can still use Classic VPN.
+Use Classic VPN when the on-premises VPN gateway does not support BGP. Using Classic VPN for dynamic routing is no longer supported—with one exception. To connect to VPN gateway software running inside a Compute Engine instance, you can still use Classic VPN.
+
+Classic VPN only supports 99.9% availability.
 
 ## HA VPN Gateways
-- **HA VPN gateways** only support dynamic routing with BGP
+- **HA VPN gateways** only support dynamic routing with BGP (hence a Cloud Router) and can't be used if the peer on-premises VPN gateway does not support BGP
 - HA VPN gateways provide 2 interfaces, and both must have tunnels to peer VPN gateway interfaces with BGP sessions to provide 99.99% availability. When configuring HA VPN gateways, an external VPN gateway resource must be created that matches the number of interfaces available on the peer VPN gateway.
 
 **Topologies**
@@ -876,7 +953,7 @@ NOTE: When using with GKE, the address translation is performed at Node level
         1. Static default: 64
         2. Dynamic default: 32
 3. Reserve IP and ports per VM
-    1. A NAT connectin of IP and port can use more than one external IP
+    1. A NAT connection of IP and port can use more than one external IP
         1. Static port allocation: source IP & port are fixed and can't use more
         2. Dynamic port allocation: change with demand
 
@@ -911,6 +988,14 @@ gateway maps all of those packets to the same NAT IP address and port pair, rega
     - Enable dynamic port allocation
     - Enable Endpoint-Independent Mapping
     - Timeouts by protocol
+
+## NAT Logging
+One log entry can be generated for each of the following:
+1. When a network connection using NAT is created.
+2. When a packet (only TCP/UDP egress not ingress even it is a respone to outbound traffic) is dropped because no port was available for NAT. 
+
+You can choose to log both kinds of events, or only one. 
+
 # Private NAT and Secure Web Proxy
 
 ## Private NAT
@@ -990,12 +1075,12 @@ The two main classes of Partner Interconnect are **Layer 2 and Layer 3 Partner I
 
 Setting up a **Layer 3 Partner interconnect** steps:
 
-- Establish connection to selected partner service provider.
-- Create VLAN attachments and receive Google-generated pairing keys.
-- Request connections for VLAN attachments from partner specifying region and capacity and providing attachment pairing key.
-- Activate VLAN attachments.
+1. **Establish a connection to the selected partner service provider.**
+2. **Create VLAN attachments in Google Cloud and receive the Google-generated pairing keys.**
+3. **Request connections for the VLAN attachments from the partner, specifying the region, capacity, and providing the attachment pairing key.**
+4. **Activate the VLAN attachments in Google Cloud.**
 
-NOTE: Optionally the VLAN attachment could also be pre-activated after it is created.
+> **Note:** Optionally, the VLAN attachment can be pre-activated after it is created.
 
 For PI, all the Cloud Routers must have a local ASN of 16550. DI and Cloud VPN do not have this requirement. ASN misconfiguration in the Cloud Router or on-premises router is a common cause of failure to establish a BGP session in the Cloud Router.
 
@@ -1178,6 +1263,9 @@ Network Endpoint Groups (NEG)
     - **Private Service Connect:** contains a single endpoint. That endpoint that resolves to either a Google-managed regional API endpoint or a managed service published by using Private Service Connect.
     - **Hybrid connectivity:** points to Traffic Director services that run outside of Google Cloud. Add the hybrid connectivity NEGs to a hybrid load balancer backend. A hybrid connectivity NEG must only include endpoints outside Google Cloud. Traffic might be dropped if a hybrid NEG includes endpoints for resources within a Google Cloud VPC network.
 
+
+NOTE:  In GKE you can use either managed instance groups or network endpoint groups, but container-native load balancing only uses network endpoint groups. In GKE workloads, autoscaling is typically accomplished using a HorizontalPodAutoscaler, though VerticalPodAutoscaler and MultidimPodAutoscaler are possible alternatives. GKE cluster autoscaling occurs based on the resource demands and scheduling of pods across all workloads using a given node pool.
+
 ## Hybrid LB
 
 - Global external HTTP(S) load balancer
@@ -1263,10 +1351,19 @@ Network Endpoint Groups (NEG)
 
 ### Type of DNS in GCP
 
-| Internal DNS | Private Zone | Public Zone |
-|---|---|---|
-| Internal DNS and Cloud DNS are different offerings.<br>Internal DNS names are names that Google Cloud creates automatically. | A private DNS zone contains DNS records that are only visible internally within your GCP network(s). | A public zone is visible to the internet.<br>Usually purchased through a Registrar. |
-| `[INSTANCE_NAME].[ZONE].c.[PROJECT_ID].internal` | Supports DNS Forwarding & DNS Peering | |
+1. Internal DNS
+- Internal DNS and Cloud DNS are different offerings.
+- Internal DNS names are names that Google Cloud creates automatically.
+- Format: `[INSTANCE_NAME].[ZONE].c.[PROJECT_ID].internal`
+- On **Linux**, by default, the VM's metadata server (169.254.169.254) resolves internal DNS names.
+- On **Windows**, by default, the subnet's default gateway resolves internal DNS names.
+
+2. Private Zone
+- A private DNS zone contains DNS records that are only visible internally within your GCP network(s) or hybrid.
+- Supports DNS Forwarding & DNS Peering.
+
+3. Public Zone
+- A public zone is visible to the internet. Usually purchased through a Registrar. 
 
 ### Managed Zones in DNS
 
@@ -1297,6 +1394,7 @@ Network Endpoint Groups (NEG)
     - Step 4: Update name servers to Cloud DNS name servers.
 
 ## Supported Cloud DNS policies
+After you create the DNS zones and artifacts needed for lookups, create Cloud DNS policies.
 
 1. **Server policies** apply private DNS configuration to a VPC network.
 2. **Response policies** enable you to modify the behavior of the DNS resolver by using rules that you define.
@@ -1320,9 +1418,9 @@ Network Endpoint Groups (NEG)
 ### Routing policies
 
 - DNS routing policies steer your traffic based on specific criteria.
-- Two types of DNS routing policies:
-    - **Weighted round robin**: lets you specify different weights per DNS target.
-    - **Geolocation:** lets you map the traffic that originates from Google Cloud regions to specific DNS targets.
+- Three types of DNS routing policies:
+    1. **Weighted round robin**: lets you specify different weights per DNS target.
+    2. **Geolocation:** lets you map the traffic that originates from Google Cloud regions to specific DNS targets.
     
     ```bash
     #define a DNS Record of type A pointing to the IP of the web server in US when the traffic comes from us-east1
@@ -1338,6 +1436,8 @@ Network Endpoint Groups (NEG)
     
     ![Untitled](images/gcp-pcne/dns_geo.png)
     
+    3. **Geofencing and failover:** lets you set up active backup configurations (only for private zones)
+
     **Routing policy caveats**
     
     1. Only one type of routing policy can be applied to a resource record set at a time.
@@ -1357,6 +1457,9 @@ Network Endpoint Groups (NEG)
     - Connect to VPC Network to share DNS services
     - NOTE this is not VPC Peering
 - DNS Peering is recommended to avoid outbound DNS forwarding from multiple VPCs which can cause problems with return traffic. DNS peering allows a single forwarding zone to be associated with a single VPC and then other VPCs to have their requests forwarded by DNS peering with the forwarding zone.
+
+Separate managed zones must be created for different domains, public vs private DNS, DNS
+peering, or DNS forwarding.
 
 ## Summary of the different config options:
 1.  🔐 Private Zone
@@ -1593,7 +1696,7 @@ Typical use cases for CDN Interconnect
 
 Premium ⇒ It arrives to google pretty much faster
 
-Standard ⇒ It arrives in more hops to google (not recommended, only for very sensitive to cost customers)
+Standard ⇒ It arrives in more hops to google (not recommended, only for very sensitive to cost customers). It uses ISPs network. If you are not going to use CDN or having multiple regions.
 
 ## VPC Flow Logs
 
@@ -1618,13 +1721,14 @@ From the same subnet details page you can access to the log explorer.
 - When troubleshooting, it's also important to remember that logs and insights are not captured for the implicit deny all ingress and allow all egress firewall rules.
 - Firewall rule logging is supported for TCP and UDP only. Reply traffic is allowed due to connection tracking. Reply traffic does not cause any logging to occur, regardless of firewall rules in that direction
 
-## Packet mirroring
+## Packet mirroring (PM)
 
 - Each packet mirroring policy sends traffic from a collection of source VMs, which must all be in the same project, VPC, and region, to a destination internal TCP/UDP load balancer configured for packet mirroring.
 - The source VMs can be specified in the packet mirroring policy by name, tag, or subnet, with different limitations depending on the approach taken.
 - The destination load balancer can be connected to one or more VMs in an unmanaged or managed instance group (instance group of collector instances). It must also be in the same region, but can be in either the same VPC or a peered VPC.
 - Packet mirroring policies can be configured to forward only ingress or only egress traffic, or to limit the traffic to only include certain source or destination IP ranges and/or protocols.
 - Proper firewall rules should be also in place.
+- The mirroring happens on the virtual machine (VM) instances, not on the network. Hence PM consumes additional bandwidth on the hosts.
 
 ## Load balancing logging
 
