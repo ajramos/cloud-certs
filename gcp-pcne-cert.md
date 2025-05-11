@@ -476,9 +476,9 @@ Four scenarios for configuring private access:
     - Either you use `private.googleapis.com` or `restricted.googleapis.com`, DNS records should be created to direct traffic to the IP addresses that are associated to those domains.
     - If using IPv6: 1) The Vm should have a /96 IPv6 and the sw running in the VM must send packets from that shourse. 2) Use the default domains
 
-## Private Service Access
+## Private Service Access (PSA)
 - When we are accessing a service within Google cloud from internal IPs. (For example using internal access to access a Cloud SQL instance)
-- Basically you create a VPC Peering of one VPC that belongs to Google (Control plane, where Google deploys the service,in this case the Cloud SQL instances) and one of your networks in your project. If you go to the VPC details you can see this in the VPC Network Peering tab.
+- Basically you create a VPC Peering of one VPC that belongs to Google (Control plane, where Google deploys the service, in this case the Cloud SQL instances) and one of your networks in your project. If you go to the VPC details you can see this in the VPC Network Peering tab.
 - Then in the tab Private Service Connections, you can see the range of the IPs that could be use by this services (this Range has been set during the Cloud SQL instance configuration)
 
 ### Compatible services
@@ -491,7 +491,25 @@ There are only some few services compatible with Private Service Access:
 - Vertex AI Workbench (Notebooks)
 - AlloyDB
 - Cloud Functions (some configs)
+- CLoud TPU
 - Other Google-managed services that require private access
+
+### Configuring PSA
+- Enable Service networking API
+- Service producers mut allocate an IPv4 address range in the VPC network that contains the service.
+- Service consumir must also allocate IPv4 address
+- If a service producer offers multiple services, you only need one private connection. For example, if a consumer uses Cloud SQL and Cloud TPU, only one private connection is created.
+- GCP uses VPC Network Peering to implement the connection between the consumer and producer VPC networks.
+
+### Deleting a connection
+- Consumers can disable the PSA connection between their VPC network and the producer VPC network. Consumers can also edit their VPC network settings to disable access. 
+- Disabling the private services access connection does not delete the VPC Network Peering to the producer VPC network. You can delete the VPC Network Peering connection by editing the VPC network.
+- Likewise, disabling the private services access connection does not release the IPv4 address range. Consumers must edit the VPC network to release the IPv4 address range.
+
+### Caveats
+- For PSA to an on-premises network to work, you must export custom routes from the on-premises network to the producer VPC network.
+- Not all Google services are supported. 
+- The same quota and limits that apply to VPC Network Peering also apply to PSA. 
 
 ## Serverless VPC Access
 - When you access to a Google deployed services VPC (Control Plane) from  serverless services (AKA Cloud Run, App Engine Standard or Google Functions)
@@ -533,6 +551,33 @@ You can use a LB to access a PSC service that includes some perks:
     1. A PSC interface lets a producer network initiate connections to a consumer network (managed service egress), while an endpoint lets a consumer network initiate connections to a producer network (managed service ingress).
     2. A PSC interface connection is transitive. This means that a producer network can communicate with other networks that are connected to the consumer network.
 - A common use case is when a managed service needs to securely access data within a customer's VPC network. 
+
+### Service Connection Policies
+- It lets a network administrator specify which producer services can be deployed and connected through service connectivity automation.
+- It is a regional resource
+- If a service connection policy exists for a managed service, a consumer service administrator can deploy that service.
+
+#### Fields
+| Service Class | specifies the type of managed service that the policy is for.<br>Each producer that supports service connection policies has its own globally unique service class. |
+| VPC Network | specifies the VPC network that the policy is scoped for |
+| Subnets | specifies the subnets that IP addresses for PSC endpoints are allocated from. |
+| Connection limit | specifies the maximum number connections that a producer can create in the policy's VPC network and region. |
+
+#### Steps
+1. A consumer network administrator creates a service connection policy for their VPC network
+2. The service connection policy references a service class
+3. A consumer service administrator deploys a managed service. 
+    - Google producer Service Attachments can be found using the UI or a describe command
+    - Self-hosted and third-party service attachments URI’s may be shared programmatically or through email 
+4. The producer receives the consumer's connectivity configuration and passes this information to a service connection map
+5. PSC service connectivity automation creates an endpoint in the consumer VPC network. This endpoint connects to a service attachment in the producer VPC network.
+
+### Caveats
+1. Consumer and Producer cannot be in the same VPC network.
+2. The address counts towards the project quota for global internal IP addresses
+3. PSC endpoints cannot be accessed from peered VPC networks, you can workaround this creating yet another PSC endpoint in the peared network.
+4. Connections from on-premises environments to non-Google services must use Cloud VPN tunnels. These on-premises environments must be in the same region as the PSC endpoint.
+
 
 # Cloud Identity-Aware Proxy (IAP)
 
@@ -1000,7 +1045,7 @@ You can choose to log both kinds of events, or only one.
 
 ## Private NAT
 
-Private NAT is a Google Cloud feature that allows you to perform network address translation (NAT) for traffic between VPC networks or between on-premises and VPC networks, without exposing resources to the public internet. Unlike Cloud NAT, which is used for outbound internet access, Private NAT is used for private, internal connectivity.
+Private NAT allows  to perform NAT for traffic between VPC networks or between on-premises and VPC networks, without exposing resources to the public internet. Unlike Cloud NAT, which is used for outbound internet access, Private NAT is used for private, internal connectivity.
 
 **Key use cases:**
 - Enable private connectivity between VPCs or from on-premises to GCP without using public IPs.
