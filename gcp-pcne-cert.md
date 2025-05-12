@@ -1832,7 +1832,17 @@ faster and easier](https://cloud.google.com/blog/products/networking/perfkit-ben
 
 This tool provides a topological visualization of your VPC networks and the infrastructure within, as well as links to on-premises networks and the internet. 
 
-The tool also provides metrics on traffic and latency between resources and across links. 
+The tool also provides real-time metrics/graphs on traffic and latency between resources and across links e.g. config details, performance metrics and log)
+
+This visual representation aids in identifying bottlenecks, optimizing traffic flows, and troubleshooting network issues more effectively.
+
+It maintains a historical record of six weeks, organizaed by hourly snapshots. Even if resources are created and deleted within an hour, they are still documented in the snapshot. This allows to see your networks's evolution.
+
+It aggregates related resources into hierarchical entities, you can expand and collapse this entities to have different level of abstraction, entities are connected if they are sending traffic
+
+The tool supports various traffic protocols (TCP, UDP, ICMP, ICMPV6, ESP, GRE) for specific paths, visualizing traffic within and across VPC networks, between Google Cloud and the internet, and to/from VPN gateways, Interconnect connections, and router appliances.
+
+In the GKE view, Network Topology shows traffic within a cluster (between pods on different nodes), between pods on the same node if intranode visibility is enabled, and between clusters and external IPs.
 
 ### Performance Dashboard
 
@@ -1957,19 +1967,54 @@ Network Connectivity Center (NCC) is a Google Cloud service that provides a cent
 
 - **Centralized connectivity management:** Create and manage complex topologies (hub-and-spoke, mesh, etc.) from a single place.
 - **Hybrid and multi-cloud support:** Integrate on-premises, other clouds, and multiple GCP VPCs.
-- **Spokes:** Attachments to the hub, such as VPN tunnels, VLAN attachments (Interconnect), Router Appliances, or VPC spokes.
+- **Spokes:** Attachments to the hub, two types:
+    1) A VPC Network (VPC Spoke)
+    2) Hybrid Spoke
+        - HA  VPN tunnels
+        - VLAN attachments (Interconnect)
+        - Router Appliances (image of a NCC partner or your custom image)
 - **Visualization:** Provides a graphical view of your network topology and traffic flows.
 
 ## Common Topologies
 
-- **Hub-and-spoke:** Central hub VPC connects to multiple spoke VPCs or on-premises networks. Simplifies routing and security.
-- **Mesh:** All networks are interconnected, but this can be complex to manage at scale.
+### Hub-and-spoke
+- There are three ways in GCP to create a hub-and-spoke: 
+    1) VPC Network Peering (efficient and low latency)
+    2) Cloud VPN (flexible, higher latency, add'al config)
+    3) **Network Connectiviy Center** 
+- Central hub VPC connects to multiple spoke VPCs or on-premises networks. 
+- Simplifies routing and security
+
+#### Caveats
+- IP addresses spaces between the hub, spoke and on-prem don't overlap
+- IPv6 is not supported
+- Privately used public IPs (PUPIs) are not supported
+
+### Mesh
+- All networks are interconnected, but this can be complex to manage at scale.
+- Two types: 1) Fully mesh or 2) Partial mesh
+- Benefits:
+    - High availability and resilience, ideal for mission critical apps
+    - Improved performance, better load balancing and reduce network congestion
+    - Not having a central point of failure helps security
+
+### Mirrored
+- Creating a replica of your network infra in another env or region. (e.g. for DR, testing and dev, global workload distribution)
+
+### Gating topologies
+- fine-grained control over data movement between your cloud and external resources, ensuring security and compliance
+- Types:
+    - Gated egress: Controls outbound traffic from the cloud.
+    - Gated ingress: Controls inbound traffic to the cloud.
+    - Gated ingress and egress: Controls inbound and outbound traffic between hybrid and multi-cloud environments.
 
 ## Example Use Cases
 
 - Centralizing connectivity between multiple VPCs and on-premises networks.
 - Simplifying management of hybrid and multi-cloud architectures.
 - Enabling transitive routing between VPCs (which is not possible with VPC peering alone).
+
+
 
 ## Reference
 
