@@ -1178,6 +1178,7 @@ Media Access Control Security (MACsec) is an IEEE 802.1AE standard for securing 
 - Autoscale based on traffic
 - High availability
 - Single anycast IP
+- Built-in defense against infra DDoS attacks
 
 ## Global vs Regional LB
 
@@ -1616,6 +1617,7 @@ Cloud DNS supports advanced scenarios for hybrid and containerized environments.
 - Byte Range request: Only caches the changes of the files (differential changes only)
 - You have a cache invalidation tool to remove keys from the cache: only one per minute so try to use folders to do it.
 - Invalidation removes content from the Cloud CDN distributed cache servers before the cache entry expires. Invalidation is eventually consistent.
+- DDoS protection similar to LB
 
 **Example: Invalidating cached content**
 ```sh
@@ -1696,44 +1698,48 @@ Typical use cases for CDN Interconnect
 # Cloud Armor
 
 - Network security Product
-- WAF + DDos attack preemtive
-- L3-L7
-- Intelligent filtering not just IP/port → Lots of customization
+- WAF + L3-L7 DDoS attack preemtive
+- Intelligent filtering not just IP/port → Lots of customization with a custom rules language
 - ML based adaptative filtering can be enabled
 - Works with Cloud Load Balancing
 - Need an Organization Node to be able to enable it
-- It basically works creating security policies:
-    - Control access to your GCP resources at your network's edge
-    - Use it for protecting your non-CDN HTTP LB
-    - Creating a security policy
-        - Set a name
-        - Set a policy type:
-            - Backend security (+ protección)
-            - Edge security
-        - Set default rule action
-            - Allow
-            - Deny → you should indicate the returning HTTP Status (403, 404, 502)
-        - Add policy to targets
-            - Our LBs
-        - Set advance configuration
-            - Enable adaptative protection flag
-    - Adding more rules:
-        - Set name
-        - Set condition
-            - Basic (IP Address/Range only)
-            - Advanced
-        - Set match
-            - IP range
-        - Set action:
-            - allow
-            - Deny
-            - Throttle
-            - Others
-        - Set previously (low number higher priority)
-        
-        NOTE: Be aware that if you delete the default policy, all the rules will be deleted.
-        
-    - When selecting advanced in the condition you can do some scripting to match the requests.
+- Predefined rulesets against OWASP Top 10 Webapps vulnerabilities (SQLi, XSS, insecure deserialization)
+- Allow blocking traffic originating from specific countries and regions
+- It basically works creating security policies: What to do [the action], when to do it [the condition], and where to apply the rule [the target]
+- Control access to your GCP resources at your network's edge
+- Use it for protecting your non-CDN HTTP LB
+- Rate limiting
+- Creating a security policy 
+    - Set a name
+    - Set a policy type:
+        - Backend security (+ protección)
+        - Edge security
+    - Set default rule action
+        - Allow
+        - Deny → you should indicate the returning HTTP Status (403, 404, 502)
+    - Add policy to targets
+        - Our LBs
+    - Set advance configuration
+        - Enable adaptative protection flag
+- Adding more rules:
+    - Set name
+    - Set condition
+        - Basic (IP Address/Range only)
+        - Advanced
+    - Set match
+        - IP range
+    - Set action:
+        - allow
+        - Deny
+        - Throttle
+        - Others
+    - Set previously (low number higher priority)
+    
+    NOTE: Be aware that if you delete the default policy, all the rules will be deleted.
+    
+- When selecting advanced in the condition you can do some scripting to match the requests.
+
+- There exists a Standard and an Enterprise version
 
 # Logging and monitoring
 
