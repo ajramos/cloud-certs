@@ -72,11 +72,22 @@ Therefore, you can control which instances a user can access by changing the pub
 
 The **Compute Network Admin** role grants access to create, modify, and delete networking resources, except for firewall rules and SSL certificates. 
 
+The **Network Viewer** role allows read-only access to networking resources
+
 The **Network Admin** role allows read-only access to firewall rules, SSL certificates, and instances (to view their ephemeral IP addresses). It does not allow a user to create, start, stop, or delete instances.
 
-The **Compute Security Admin** has permissions to create, modify, and delete firewall rules and SSL certificates, and also to configure Shielded VM settings.
+The **Security Admin** has permissions to create, modify, and delete firewall rules and SSL certificates, and also to configure Shielded VM settings.
 
 The **Logs Viewer** role already gives you read-only access to all features of Logging except Access Transparency logs and Data Access audit logs.
+
+Also See Shared VPC related roles in the Shared VPC section.
+
+NOTE: 
+- Child policies cannot restrict access granted at the parent level
+- Deny Policies  prevent certain principals from using certain permissions, regardless of the roles they're granted.
+- Deny policies take precedence over access policies,
+
+
 
 ## Policy Intelligence
 
@@ -118,7 +129,7 @@ Use the Default Network is a bad practice because of many reasons so that it is 
 - Same name – confusion
 - Broad ranges in IP address
 - Can not delete subnet
-- Default Firewall rules are broad
+- Default Firewall rules are broad (default-allow-internal, ssh, rdp and icmp, priority 655534)
 - Can not go beyond /16 (start with a /20)
 
 There are four reserved IP addresses in each subnet's primary IPv4 range. There are no reserved IP addresses in the secondary IPv4 ranges.
@@ -365,7 +376,8 @@ Bidirectional Forwarding Detection (BFD) is a network protocol that provides fas
 
 - Firewall rules control incoming or outgoing traffic to an instance.
 - Trust nothing by default
-- Some default rules:
+- Stateful (allow bidireccional)
+- Some default rules (cannot be removed, but they have the lowest priorities):
     - Allow all outgoing traffic - egress
     - Deny all incoming traffic - ingress
 - Common port/protocol
@@ -396,6 +408,13 @@ Bidirectional Forwarding Detection (BFD) is a network protocol that provides fas
     
     NOTE: A VM can only change its service account when it stopped. Use gcloud auth list to know the service account that is working in a VM
 
+- The first rules that matches is the one to be applied
+- Deny action rules override allow action ones when they have the same priority
+
+## Firewall policies
+- Allow to apply firewall rules to multiple VPC networks in an org
+- It uses tags
+
 ## Advanced Microsegmentation with Secure Tags
 
 Google Cloud allows you to implement microsegmentation not only with network tags and service accounts, but also with **secure tags**. Secure tags are managed at the organization level and enable more granular and centralized segmentation, especially when used with Cloud Next Generation Firewall (NGFW).
@@ -409,6 +428,25 @@ gcloud compute network-security secure-tags create env-prod --description="Produ
 gcloud compute instances add-secure-tags my-vm --secure-tags=env-prod
 ```
 
+## Traffic always allowed
+Firewall rules don't apply to:
+1. Packets to/from Google Cloud metadata server
+2. Packets to the VM's own NICs:
+    - primary internal IPv4/IPv6 address or alias IP
+    - internal/external IPv4 address associated with a forwarding rule for a LB or protocol forwarding if the instance is a backend for the LB or is a target instance for protocol forwarding.
+    - loopback address
+    - any address config as a nw overlay sw within the vm
+
+## Taffic always blocked
+- Incoming DHCP offers and ACK from all sources except from the metadata server
+- External IPv4 and IPv6 addresses only accept TCP, UDP, ICMP, ICMPv6, IPIP, AH, ESP, SCTP, and GRE packets.
+
+## Best practices
+1. Least privilge model
+2. Minimize direct exposure to internet (avoid 0.0.0.0/0 range)
+3. Create a fw rule with the lowest priority that blocks all outboung traffic for all protocols and ports, then create allow rules accordingly.
+4. Adopt standard naming convention, e.g. $direction-$service/protocol-$from/to-$source: allow-ssh-from-onprem
+5. Use service account based rules better than tag-based
 
 # VM to VM Communication
 
@@ -1064,6 +1102,8 @@ Secure Web Proxy is a managed service that provides secure, scalable, and policy
 - Outbound HTTP/HTTPS proxy for VMs and GKE workloads.
 - URL filtering, user/group-based access control, and threat protection.
 - Integrated with Cloud Logging and Security Command Center.
+- Monitored access to untrusted websites: identifies and logs any traffic that deviates from your established policies, providing you with valuable insights. 
+- Essentially creating an allowlist of approved web destinations, preventing your systems from communicating with potentially harmful or unauthorized websites
 - Can be used to enforce compliance and prevent data exfiltration.
 
 **Reference:**  
@@ -1741,6 +1781,24 @@ Typical use cases for CDN Interconnect
 
 - There exists a Standard and an Enterprise version
 
+# Cloud IDS
+
+- It is a fully managed service.
+- It is an intrusion detection service that provides threat detection for intrusions, malware, spyware, and command-and-control attacks on your network.
+- Works by creating a Google-managed peered network with mirrored VMs. Traffic in the peered network is mirrored, and then inspected by Palo Alto Networks threat protection technologies to provide advanced threat detection. 
+- Provides full visibility into network traffic, including both north-south and east-west traffic, letting you monitor VM-to-VM communication to detect lateral movement.
+- Gives you immediate indications when attackers are attempting to breach your network, and the service can also be used for compliance validation, like PCI 11.
+- Automatically updates all signatures without any user intervention, enabling users to focus on analyzing and resolving threats without managing or updating signatures.
+
+## How it works
+- Uses a resource known as an IDS endpoint, a zonal resource that can inspect traffic from any zone in its region. 
+- Each IDS endpoint receives mirrored traffic and performs threat detection analysis.
+- Uses Google Cloud packet mirroring, which creates a copy of the network traffic. 
+- After creating an IDS endpoint, you must atta ch one or more packet mirroring policies to it. 
+- These policies send mirrored traffic to a single IDS endpoint for inspection. 
+- The packet mirroring logic sends all traffic from individual VMs to Google-managed IDS VMs. 
+- For example, all traffic mirrored from VM1 and VM2 will always be sent to IDS-VM1.
+
 # Logging and monitoring
 
 ## Network Service Tier
@@ -1833,6 +1891,7 @@ faster and easier](https://cloud.google.com/blog/products/networking/perfkit-ben
     - `Allow` rules with unused attributes
     - `Allow` rules with overly permissive IP addresses or port ranges
     - `Deny` rule insights with no hits during the [observation period](https://cloud.google.com/network-intelligence-center/docs/firewall-insights/how-to/configure-observation-period#observation-period).
+- Uses Cloud monitoring metrics and Recommender insights
 
 ### Network Topology
 
@@ -2028,11 +2087,12 @@ Network Connectivity Center (NCC) is a Google Cloud service that provides a cent
 
 # Cloud Next Generation Firewall (NGFW)
 
-Cloud Next Generation Firewall (NGFW) is an advanced firewall solution in Google Cloud that provides centralized, scalable, and context-aware security controls for your cloud workloads.
+Cloud Next Generation Firewall (NGFW) packages firewall rules into firewall policies.
 
 ## Key Features
-
+- Allow applying policies to VPC networks globally or regionally
 - **Hierarchical firewall policies:** Apply firewall rules at the organization, folder, or project level for consistent security posture.
+- **Global and regional network firewall policies**, global applies to all the regions within the VPC while regional applies to a single specific region
 - **FQDN objects:** Create firewall rules based on fully qualified domain names (e.g., allow egress to `*.github.com`).
 - **Secure tags:** Use organization-level tags for granular microsegmentation (see section above).
 - **Intrusion Prevention Service (IPS):** Detect and block known threats and vulnerabilities at the network level.
