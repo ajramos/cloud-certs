@@ -564,7 +564,7 @@ There are only some few services compatible with Private Service Access:
 - All communications between the consumer VPC network and service producer VPC network must be initiated by the consumer.
 - Producers can choose to deploy a multi-tenant model, where your VPC network contains services that are used by multiple consumer VPCs. The consumer networks can have overlapping subnet ranges.
 - Service producers can scale services to as many VM instances as required, without asking consumers for more IP addresses.
-- Service producers don’t need to change firewall rules based on the subnet ranges in the consumer VPC networks.
+- Service producers don't need to change firewall rules based on the subnet ranges in the consumer VPC networks.
 - PSC supports access to the following types of published VPC-hosted services, which include the following:
     - [Google published services](https://cloud.google.com/vpc/docs/private-service-connect-compatibility#google-services), such as Apigee or the GKE control plane
     - [Third-party published services](https://cloud.google.com/vpc/docs/private-service-connect-compatibility#third-party-services) provided by Private Service Connect partners
@@ -606,7 +606,7 @@ You can use a LB to access a PSC service that includes some perks:
 2. The service connection policy references a service class
 3. A consumer service administrator deploys a managed service. 
     - Google producer Service Attachments can be found using the UI or a describe command
-    - Self-hosted and third-party service attachments URI’s may be shared programmatically or through email 
+    - Self-hosted and third-party service attachments URI's may be shared programmatically or through email 
 4. The producer receives the consumer's connectivity configuration and passes this information to a service connection map
 5. PSC service connectivity automation creates an endpoint in the consumer VPC network. This endpoint connects to a service attachment in the producer VPC network.
 
@@ -1799,6 +1799,50 @@ Typical use cases for CDN Interconnect
 - The packet mirroring logic sends all traffic from individual VMs to Google-managed IDS VMs. 
 - For example, all traffic mirrored from VM1 and VM2 will always be sent to IDS-VM1.
 
+# Network Security best practices
+
+1. **Zero Trust Model**
+   - No implicit trust in users or devices
+   - Verify identity and context for each access request
+   - Shift security controls from network perimeter to individual users/devices
+
+2. **Secure On-Premise to Cloud Connections**
+   - Prioritize secure connectivity across environments
+   - Use Cross-Cloud Interconnect, Dedicated/Partner Interconnect, IPsec VPNs
+   - Implement Private Service Connect for secure Google APIs access
+
+3. **Default Networks Management**
+   - Disable automatic default network creation
+   - Strategic IP address allocation planning
+   - Limit to one VPC per project for better access control
+
+4. **Cloud Perimeter Security**
+   - Deploy firewalls and VPC Service Controls
+   - Use Shared VPC for centralized network management
+   - Implement multi-level firewall policies (org, folder, VPC)
+   - Base rules on IPs, protocols, ports, service accounts, secure tags
+
+5. **Network Analysis**
+   - Use Cloud IDS for VPC traffic visibility
+   - Implement Packet Mirroring for VM traffic analysis
+   - Perform security inspection in Compute Engine and GKE
+
+6. **Web Application Firewall**
+   - Deploy Cloud Armor for web application protection
+   - Implement DDoS attack protection
+   - Utilize Managed Protection Plus advanced features
+
+7. **Automated Infrastructure**
+   - Leverage Terraform, Jenkins, or Cloud Build
+   - Create immutable environments
+   - Use Google Cloud security blueprints
+
+8. **Network Monitoring**
+   - Enable VPC Flow Logs and Firewall Rules Logging
+   - Real-time traffic visibility
+   - Use Cloud Logging, Monitoring, Firewall Insights, Network Intelligence Center
+   - Track, analyze, and optimize security and performance
+
 # Logging and monitoring
 
 ## Network Service Tier
@@ -1833,9 +1877,10 @@ From the same subnet details page you can access to the log explorer.
 ## Packet mirroring (PM)
 
 - Each packet mirroring policy sends traffic from a collection of source VMs, which must all be in the same project, VPC, and region, to a destination internal TCP/UDP load balancer configured for packet mirroring.
+- Useful when you need to monitor and analyze your security status. It exports all traffic, not only the traffic between sampling periods
 - The source VMs can be specified in the packet mirroring policy by name, tag, or subnet, with different limitations depending on the approach taken.
 - The destination load balancer can be connected to one or more VMs in an unmanaged or managed instance group (instance group of collector instances). It must also be in the same region, but can be in either the same VPC or a peered VPC.
-- Packet mirroring policies can be configured to forward only ingress or only egress traffic, or to limit the traffic to only include certain source or destination IP ranges and/or protocols.
+- Packet mirroring policies can be configured to forward only ingress or only egress traffic, or to limit the traffic to only include certain source or destination IP ranges and/or protocols. The max number of filters is 30.
 - Proper firewall rules should be also in place.
 - The mirroring happens on the virtual machine (VM) instances, not on the network. Hence PM consumes additional bandwidth on the hosts.
 
