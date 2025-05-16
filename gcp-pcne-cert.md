@@ -834,6 +834,7 @@ The object that the IP address is assigned to:
 2. Cloud Interconnect:
     1. Dedicated Interconnect
     2. Partner Interconnect
+    3. Cross-cloud Interconnect
 3. Peering with Google:
     1. Direct peering
     2. Carrier peering
@@ -1117,9 +1118,10 @@ Secure Web Proxy is a managed service that provides secure, scalable, and policy
 - Setup time is quickly (??)
 - No encryption while traffic travels
 - when you set up peering between two VPC networks, all the subnet routes are advertised.
-- Two types:
+- Three types:
     - Dedicated: Requires google presence close to your DC.
     - Partner: Requires a partner when your not close to google location.
+    - Cross-cloud: Dedicated physical connection between Google VPC and other cloud service provider network
 - Creating a Dedicated Interconnect:
     - Name
     - Location → List of the available DCs
@@ -1145,11 +1147,35 @@ Multiple VLAN attachments may also be required to provide for the capacity requi
 
 To share an Interconnect connection to on-premises infrastructure across multiple projects you can use Shared VPC or VPC peering. For projects with their own VPC networks, you can create separate VLAN attachments and Cloud Routers per project. Shared VPC is the recommended approach as the configuration is simpler and the solution is easier to scale compared to VPC peering and cheaper than having separate VLAN attachments per project. In Shared VPC, the Interconnect and associated resources should all be created in the Shared VPC host project.
 
-After you order an interconnect, Google sends you and the NOC (technical contact) an email with your LOA-CFAs (one PDF file per interconnect). You must send these LOA-CFAs to your vendor so that they can install your cross connects. If you don't, your interconnects won't get connected.
-
 ## Dedicated Interconnect (DI)
 
-Google Cloud and on-premises networks and supports 1-8 10 Gbps or 1-2 100 Gbps circuits per connection.
+Google Cloud and on-premises networks and supports 1-8 10 Gbps or 1-2 100 Gbps fiber circuits per connection.
+
+Upon establishing a VLAN attachment, it is linked with a Cloud Router. This Cloud Router initiates a BGP session for both the VLAN attachment and its corresponding on-premises peer router. Through this BGP session, the Cloud Router receives routes advertised by the on-premises router. These routes are then integrated into your VPC network as custom dynamic routes. Simultaneously, the Cloud Router advertises routes for Google Cloud resources to the on-premises peer router, ensuring bi-directional route exchange.
+
+### HA with peering edge placement
+To achieve **99.99%** high availability, consider the following: 
+1. Create at least 4 Interconnect connections, 2 in each metropolitan areas. 
+2. In a metro, place 2 connections in different edge availability domains (metro availability zones).   
+3. Deploy a minimum of 2 Cloud Routers across at least 2 regions
+NOTE: On prem you will need 4 routers.
+
+### Creating a DI
+1. Order your connection. 
+2. Google sends you a LOA-CFA—that is, a Letter of Authorization and Connecting Facility Assignment. 
+    - The LOA-CFA identifies the connection ports that Google has assigned for your Dedicated Interconnect connection. 
+    - The LOA-CFA also grants permission for a vendor in a colocation facility to connect to them.
+3. Send LOA-CFAs to the colocation facility, so they can complete your connection setup. Your vendor will let you know when this setup is complete.
+4. Test the connection. Google sends you automated emails with configuration information for two different tests. 
+    - First, Google sends an IP address configuration to test light levels on every circuit in a Dedicated Interconnect connection. 
+    - After those tests pass, Google sends the final IP address configuration to test the IP connectivity of each connection. 
+6. Apply these configurations to your Cloud Routers so that Google can confirm connectivity. 
+7.After all tests have passed, your Dedicated Interconnect connection is ready to use.
+
+Create VLAN attachments and establish BGP sessions. You can do this using the Google Cloud console.
+
+Configure the on-premises routers to establish a BGP session with your Cloud Router. To configure your on-premises router, use the VLAN ID, interface IP address, and peering IP address provided by the VLAN attachment.
+
 
 ## Partner Interconnect (PI)
 
@@ -1157,6 +1183,28 @@ The two main classes of Partner Interconnect are **Layer 2 and Layer 3 Partner I
 
 - for Layer 2 BGP configuration must be done for the on-premises routers, as the BGP session is established between them and the Cloud Routers in GCP
 - for Layer 3, the BGP configuration is done in the partner's routers.
+
+### Creating a PI
+1. Order your connection from a supported service provider. 
+2. Create a VLAN attachment, which creates a pairing key. 
+    - The pairing key is unique and lets a service provider identify and connect to the associated Cloud Router. 
+    - The service provider uses this key to finish configuring your VLAN attachment.
+3. Request a connection from your service provider. 
+4. Submit the pairing key and other connection details, such as the connection capacity and location. 
+5. Your service provider configures your connection; they must confirm that they can serve your requested capacity. 
+6. When the configuration is complete, you’ll receive an email.
+7. In the VLAN attachment, activate your connection. After the connection is activated, it can start passing traffic.
+8. Configure the on-premises routers to establish a BGP session with your Cloud Router. 
+9. To configure your on-premises routers, use the VLAN ID, interface IP address, and peering IP address provided by the VLAN attachment.
+
+
+## Cross-cloud Interconnect (XI)
+- Requires Primary and redundant ports (Google Cloud  and remote cloud service provider)
+- Bandwidth 10 Gbps or 100 Gbps per connection
+- Supported providers: Amazon Web Services (AWS), Microsoft Azure, Oracle Cloud Infrastructure (OCI), and Alibaba Cloud.
+- It requires you to have, minimally, two connections: each in a different edge availability domain (EAD) of a metropolitan area. This approach gives you 99.9% availability.
+    - if you add two EAD in different metro areas you can reach 99.99% HA
+
 
 Setting up a **Layer 3 Partner interconnect** steps:
 
@@ -1184,10 +1232,15 @@ Media Access Control Security (MACsec) is an IEEE 802.1AE standard for securing 
 - Uses 128-bit AES-GCM encryption.
 
 ### Requirements and limitations
-- Only available for Dedicated Interconnect (not Partner Interconnect).
 - Requires MACsec-capable routers in your on-premises environment.
-- Both 10 Gbps and 100 Gbps connections support MACsec.
 - You need to configure Connectivity Association Key (CAK) and Connectivity Association Key Name (CKN).
+
+### Encryption by flavour
+- Dedicated Interconnect: between Google's peering edge router and an on-premises router.
+- Partner Interconnect: between Google's peering edge router and the service provider's peering edge router.
+- Cross Cloud Interconnect: between Google’s peering edge router and router run by remote cloud.
+
+MACsec for Cloud Interconnect doesn't provide encryption in transit within Google. For stronger security, we recommend that you use MACsec with other network security protocols, such as IP Security (IPsec) and Transport Layer Security (TLS).
 
 ### Configuration steps
 1. Create a Cloud Interconnect connection with MACsec enabled.
