@@ -844,7 +844,7 @@ The object that the IP address is assigned to:
 - GCE resources connect to our private network on prem or other cloud (e.g. AWS)
 - Very quick to setup
 - Traffic encrypted in one VPN Gateway and decrypted by the other
-- You want to selectively advertise routes between VPC networks.
+- You want to selectively advertise routes between VPC networks (with Interconnect you share all).
 - Traffic travels through internet publicly
 - Each tunnel VPN is 3 Gbps bandwidth (ingress+egress) 1.5 if traverse internet, 3Gbp in direct
 - Cloud VPN is transitive (A+B and A+C allows B+C)
@@ -879,9 +879,13 @@ Classic VPN only supports 99.9% availability.
     - An HA VPN gateway to two separate peer VPN devices where each peer device has its own external IP address.
     - An HA VPN gateway to one peer VPN device that has two separate external IP addresses.
     - An HA VPN gateway to one peer VPN device that has one external IP address.
+    NOTE: REDUNDANCY_TYPE = TWO_IPS_REDUNDANCY => 99.99% HA
 2. **An HA VPN gateway to an Amazon Web Services (AWS) virtual private gateway**, which is a peer gateway configuration with four interfaces.
 3. **Two HA VPN gateways connected to each other. (within Google projects)**
 4. **One or more HA VPN gateways associated with two VLAN attachments in an HA VPN over Cloud Interconnect deployment. Each HA VPN gateway is connected to one or more peer VPN devices.**
+- Each tier requires its own Cloud router
+    1. The Cloud Router for Cloud Interconnect is used exclusively to exchange VPN gateway prefixes between the VLAN attachments.
+    2. The Cloud Router for HA VPN exchanges prefixes between your VPC network and your on-premises network. 
 
 **Configure HA VPN for more bandwidth**
 - To increase the bandwidth of your HA VPN gateways, add more HA VPN tunnels.
@@ -981,7 +985,7 @@ Classic VPN only supports 99.9% availability.
         
 - Now the configuration is done, you can either add/remove subnets and the routes will be automatically updates, with one restriction, they will be only updated if the changes belong to the same region.
 - If we want to add subnets in other region and get automatically sync by the VPN, we will need to activate it at the VPC level, there is config parameter "dynamic routing mode" that can be either global or regional (the latter is the default). Change it into Global to make the configuration globally synchronized.
-- When creating BGP sessions in Cloud Routers for VPN tunnels or Interconnect VLAN attachments, the base advertised route priority can be configured for the BGP session. That value is sent as a multi-exit discriminator (MED) attribute. That particular tunnel or attachment is typically preferred, because lower values are preferred to higher values with all else being equal. Two BGP sessions with equal advertised priority would be equally preferred (active/active) and with different values, one would be prioritized (active/passive).
+- When creating BGP sessions in Cloud Routers for VPN tunnels or Interconnect VLAN attachments, the base advertised route priority can be configured for the BGP session. That value is sent as a multi-exit discriminator (MED) attribute (default value for base priority is 100). That particular tunnel or attachment is typically preferred, because lower values are preferred to higher values with all else being equal. Two BGP sessions with equal advertised priority would be equally preferred (active/active) and with different values, one would be prioritized (active/passive).
 
 ## Static vs dynamic routing
 
