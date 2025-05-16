@@ -1301,12 +1301,16 @@ Session affinity, also known as session persistence, is a load balancing feature
 
 ## New terminology for Load balancer
 
+![Load Balancer Classification](images/gcp-pcne/lb_classification.png)
+
+
 - Application Load Balancer
     - External
         - global
         - regional
     - Internal
         - regional
+        - cross-regional
 - Network Load Balancer
     - Proxy (TCP/SSL offloading)
         - External
@@ -1314,6 +1318,7 @@ Session affinity, also known as session persistence, is a load balancing feature
             - Regional
         - Internal
             - regional
+            - cross-regional
     - Pass-through (TCP, UDP, ESP ICMP, GRE)[IPv4 or IPv6]
         - External
             - regional
@@ -1330,6 +1335,7 @@ Session affinity, also known as session persistence, is a load balancing feature
     - Global terminate locations in anywhere (small latency)
     - Proxy terminate the connections at GFE or envoy proxies
     - Passthrough DO NOT terminate the client connections, the responses go directly to the client without going through the LB (Direct server return=DSR)
+    - When you use an internal IP address to specify the next hop, the internal load balancer can be in the same VPC network or a peered VPC network.
 
 ## Overview of LB
 
@@ -1354,12 +1360,42 @@ NOTE:  In GKE you can use either managed instance groups or network endpoint gro
 
 ## Hybrid LB
 
-- Global external HTTP(S) load balancer
-- Global external HTTP(S) load balancer (classic)
-- Regional external HTTP(S) load balancer
-- Internal HTTP(S) Load Balancing
-- External TCP Proxy Load Balancing
-- External SSL Proxy Load Balancing
+A hybrid load balancing lets you extend Cloud LB to workloads that run on your existing infrastructure outside of GCP.
+
+You configure a load balancer backend service to communicate to the external endpoints by using a hybrid NEG.
+
+The external environments can use Cloud Interconnect or Cloud VPN to communicate with Google Cloud. The load balancer must be able to reach each service with a valid IP address:Port combination.
+
+You can use hybrid load balancing with the following:
+- Global external Application Load Balancer
+- Classic Application Load Balancer
+- Regional external Application Load Balancer
+- Cross-region internal Application Load Balancer
+- Regional internal Application Load Balancer
+- External proxy Network Load Balancer (global and regional)
+- Regional internal proxy Network Load Balancer
+- Cross-region internal proxy Network Load Balancer
+
+### Configuration of an hybrid LB
+- The frontend configuration is the same as any other load balancer. 
+- The backend servicerequires special configu. 
+    1. Configure one or more hybrid connectivity network endpoint groups (NEG).
+    2. Add each non-Google Cloud network endpoint IP:Port combination to a hybrid connectivity NEG. 
+    3. Ensure that the IP address and port are reachable from GCP. 
+    NOTE: Set the network endpoint type to NON_GCP_PRIVATE_IP_PORT.
+    4. Create the NEG in a GCP zone that is as close as possible to your other env.
+    5. Add a health check to the NEG.
+    6. Add the hybrid connectivity NEGs to a hybrid LB backend. 
+    NOTE A hybrid connectivity NEG must only include endpoints outside GCP otherwise traffic might be dropped.
+
+### Caveats:
+1. To create, delete, or manage a LB with mixed zonal and hybrid connectivity NEGs backends in a single backend service, you must use the Google Cloud CLI or the REST API. 
+2. Regional dynamic routing and static routes are not supported. The Cloud Router used for hybrid connectivity must be enabled with global dynamic routing.
+3. The internal ALB and hybrid connectivity must be configured in the same region. If they are configured in different regions, you might see backends as healthy, but client requests will not be forwarded to the backend.
+4. Ensure that you also review the security settings on your hybrid connectivity configuration. 
+    - HA Cloud VPN connections are encrypted by default, using IPsec encryption. 
+    - Cloud Interconnect connections are not encrypted by default.
+
 
 ## Traffic management
 
@@ -1369,9 +1405,20 @@ NOTE:  In GKE you can use either managed instance groups or network endpoint gro
     - Perform request-based and response-based actions such as redirects and header transformations.
     - Use traffic policies to fine-tune load balancing behavior.such as retry policies, request mirroring, and cross-origin resource sharing (CORS).
 - Supported LB:
-    - Global external HTTP(S) load balancer
-    - Global external HTTP(S) load balancer (classic)
-    - Regional external HTTP(S) load balancer
+    - Global external application load balancer
+    - Global external aaplication load balancer (classic)
+    - Regional external aaplication load balancer
+    - Internal application load balancer
+
+- Configured in a URL map, it contains rules that define the criteria to route incoming tarffic to a backend service or bucket. Two modes:
+1. Simple host and path rule
+2. Advance host, path and route rule (i.e. priority and additional config options)
+- Path rules are evaluated on a longest-path-match-first basis, if no path is found it sends the traffic to the default backend service. 
+
+### Caveats
+- Not all load balancers support all traffic management features [Routing and traffic management GCP doc](https://cloud.google.com/load-balancing/docs/features#routing-traffic-management).
+- Wildcards are supported, but only after a forward slash (/) => /* is correct /video* is not
+- Rule matching does not use regular expressions or substring matching. => /videos/hd* does not match /videos(hd-pdq
 
 ## Hands on Cloud LB (after the DNS Setup)
 
