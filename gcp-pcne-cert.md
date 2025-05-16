@@ -1420,6 +1420,38 @@ You can use hybrid load balancing with the following:
 - Wildcards are supported, but only after a forward slash (/) => /* is correct /video* is not
 - Rule matching does not use regular expressions or substring matching. => /videos/hd* does not match /videos(hd-pdq
 
+## Internal LB
+- Super fast because don't ahave the overhead associated with other Cloud LBs.
+- Routes connections directly from clients to the healthy backend without any interruption. 
+- There's no intermediate device or single point of failure. 
+- Client requests to the LB IP address go directly to the healthy backend VMs. 
+- Responses from the healthy backend VMs go directly to the clients, not back through the load balancer. TCP responses use direct server return.
+
+### Specifying the next hop
+Three options depending the location of the next hop LB:
+1. If next hop LB within the same VPC network
+    - Specify Fowarding rule name and LB region
+2. If next hop LB within a peered VPC network
+    - Specify Forwarding rule IP
+3. If the forwarding rule's network match the route's VPC network
+    - Specify Forwarding rule link
+    - The forwarding rule can be kicated in:
+        - the project that contains the forwarding's network (standalone or Shared VPC Host)
+        - Shared VPC service project
+
+### Benefits
+- When the load balancer is a next hop for a static route:
+    - no special configuration is needed within the client VMs. 
+    - Client VMs send packets to the load balancer backends through VPC network routing
+    - Same benefits as standalone internal passthrough network LB
+
+### Caveats
+1. Enable global access on the VPC network so that the next hop is usable from all regions.
+2. Even if all health checks fail, the load balancer next hop is still in effect.
+3. The load balancer must use an IP address that is unique to a load balancer forwarding rule.
+4. Two or more custom static route next hops with the same destination that use different load balancers are never distributed by using ECMP.
+5. To route identical source IP addresses to the same backend, use the client IP, no destination (CLIENT_IP_NO_DESTINATION) session affinity option.
+ 
 ## Hands on Cloud LB (after the DNS Setup)
 
 ### For Serverless
