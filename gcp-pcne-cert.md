@@ -27,6 +27,42 @@ flowchart TD
 | B | 172.16.0.0 – 172.31.255.255 | 172.16.0.0/12 |
 | C | 192.168.0.0 – 192.168.255.255 | 192.168.0.0/16 |
 
+## Non-RFC 1918 Addressing
+
+**Privately Used Public IPs (PUPIs):**
+- Use public IP ranges privately within VPC
+- Not routed to internet from VPC
+- Useful when RFC 1918 space exhausted or conflicts
+
+**Use cases:**
+- Large organizations with RFC 1918 exhaustion
+- Avoiding IP conflicts in mergers/acquisitions
+- Hybrid environments with overlapping private ranges
+
+**Limitations:**
+- Cannot use with some Google services
+- Not supported in NCC hub-and-spoke
+- Requires careful routing configuration
+- May conflict with internet routing
+
+# Hybrid IP Address Planning
+
+**Avoiding overlaps:**
+- Reserve separate RFC 1918 blocks per environment
+- Use /16 for on-premises, /8 for cloud
+- Document IP allocation in IPAM system
+
+**Multi-cloud strategies:**
+- Use different RFC 1918 classes per cloud
+- Plan for future acquisitions/mergers
+- Consider using non-RFC 1918 for conflicts
+
+**Best practices:**
+- Start with larger subnets, subdivide as needed
+- Leave room for growth (50% buffer)
+- Use consistent naming conventions
+- Plan for disaster recovery IP ranges
+
 # Google Compute SLA
 
 | Covered Service | Monthly Uptime Percentage (SLO) |
@@ -34,6 +70,19 @@ flowchart TD
 | Instances in Multiple Zones | >= 99.99% |
 | A Single Instance | >= 99.5% |
 | Load balancing | >= 99.99% |
+
+# Disaster Recovery Patterns
+
+**Multi-region strategies:**
+- Active-Passive: Primary region + standby
+- Active-Active: Traffic distributed across regions  
+- Pilot Light: Minimal secondary + rapid scale
+
+**Network DR:**
+- Global HTTP(S) LB: automatic regional failover
+- Multiple VPN/Interconnect: redundant connectivity
+- DNS health checks: automatic DNS failover
+- Cross-region Cloud Routers: BGP route advertisement
 
 # SSH into VMs
 
@@ -70,6 +119,8 @@ Therefore, you can control which instances a user can access by changing the pub
 
 # IAM Roles
 
+## Core Networking Roles
+
 The **Compute Network Admin** role grants access to create, modify, and delete networking resources, except for firewall rules and SSL certificates. 
 
 The **Network Viewer** role allows read-only access to networking resources
@@ -79,6 +130,12 @@ The **Network Admin** role allows read-only access to firewall rules, SSL certif
 The **Security Admin** has permissions to create, modify, and delete firewall rules and SSL certificates, and also to configure Shielded VM settings.
 
 The **Logs Viewer** role already gives you read-only access to all features of Logging except Access Transparency logs and Data Access audit logs.
+
+**Additional Networking Roles:**
+- `roles/compute.loadBalancerAdmin`: Manage LB resources
+- `roles/dns.admin`: Full DNS control
+- `roles/dns.reader`: Read-only DNS access
+- `roles/resourcemanager.projectIamAdmin`: Required for Shared VPC setup
 
 Also See Shared VPC related roles in the Shared VPC section.
 
@@ -206,6 +263,31 @@ Deleting a subnet first requires deleting all VMs in that subnet.
 
 NOTE: When you want to expand a subred IP range, it only accept superset of the current range (wider range e.g. /28 → /24)
 
+# VPC Troubleshooting Common Issues
+
+## VPC Peering Issues
+- **Overlapping CIDR ranges:** Cannot peer VPCs with overlapping subnets
+- **Transitive routing:** VPC peering is not transitive (A-B, B-C ≠ A-C)
+- **Route limits:** Max 25 peered networks per VPC
+- **Custom routes:** Not automatically shared, must be exported/imported
+
+## Subnet Expansion Failures
+- **Invalid range:** New range must be superset of current range
+- **Overlap conflicts:** Cannot expand if conflicts with other subnets
+- **Secondary ranges:** Cannot expand secondary ranges, must recreate
+- **Firewall dependencies:** Update firewall rules after expansion
+
+## Private Google Access Issues
+- **Subnet setting:** Must enable Private Google Access on subnet
+- **DNS resolution:** Check private.googleapis.com or restricted.googleapis.com
+- **Routes:** Ensure default route exists (0.0.0.0/0)
+- **Firewall:** Allow egress to Google API IP ranges
+
+## Shared VPC Troubleshooting
+- **IAM permissions:** Service project needs Network User role
+- **Subnet access:** Check if specific subnets are shared with service project
+- **Cross-project resources:** Verify service account permissions
+
 ## VPC Routes
 
 ### Routes
@@ -284,6 +366,32 @@ NOTE: When you want to expand a subred IP range, it only accept superset of the 
     - Option 2: Automatically, by using either the console to create a Classic VPN tunnel with policy-based routing or as a route-based VPN.
     NOTE: You can limit which VMs would use a custom route by adding a tag to the custom route that matches a tag on the appropriate VMs.
 
+**Policy-based Routing in GCP**
+
+**GCP Implementation:**
+- **Network tags on custom routes:** Route specific VMs based on tags
+- **Classic VPN policy-based tunnels:** Define local/remote traffic selectors
+- **Route priorities:** Control which route takes precedence
+- **NVA integration:** Route through network virtual appliances
+
+**GCP-specific use cases:**
+- Route tagged VMs through security appliances (firewall, IDS)
+- Direct development vs production traffic to different gateways
+- Implement hub-and-spoke routing with NVAs
+- Classic VPN with specific traffic selectors
+
+**Configuration in GCP:**
+- Custom routes with network tags (gcloud compute routes create --tags)
+- Classic VPN policy-based routing (local/remote traffic selectors)
+- Route priorities to control traffic flow
+- NVA instances with IP forwarding enabled
+
+**GCP Limitations:**
+- Network tags only apply to VM instances, not subnets
+- Policy-based VPN limited to Classic VPN (not HA VPN)
+- Route-based routing preferred for most scenarios
+- Limited to destination-based routing (no source-based routing natively)
+
 **Dynamic routes**
 
 - Routes are added and removed automatically by Cloud Routers in your VPC network.
@@ -326,6 +434,24 @@ NOTE: ProxyVM Configuration to inspect egress traffic:
     3. Specify the next hop as the proxy VM
     4. Configure the proxy VM to enable IP forwarding.
 
+## Routing Troubleshooting
+
+**Route precedence issues:**
+- Subnet routes always win (most specific)
+- Custom routes by priority (lower number = higher priority)
+- Check route table for conflicts
+
+**Common routing problems:**
+- **Asymmetric routing:** Return path different from forward path
+- **Route loops:** Circular routing between networks
+- **Missing routes:** Traffic dropped due to no matching route
+- **Priority conflicts:** Multiple routes with same destination
+
+**Debugging tools:**
+- Network Intelligence Center connectivity tests
+- VPC Flow Logs for traffic analysis
+- Route table inspection
+- Traceroute from instances
 
 # Cloud Router
 
@@ -341,7 +467,40 @@ NOTE: ProxyVM Configuration to inspect egress traffic:
 - Cloud Routers have **default and custom route advertisement modes** that can be set for the router as a whole or separately for each BGP session.
     - The **default advertisement mode** will advertise all subnets in the same region when the VPC in the Cloud Router is set to regional dynamic routing mode, or all subnets in all regions when the VPC is set to global dynamic routing mode.
     - When in **custom route advertisement mode**, the Cloud Router can be configured to advertise a specified set of IP ranges. In addition, Cloud Router can also be configured to advertise all subnets in the region or across all regions, based on the VPC's dynamic routing mode.
-- For **99.99% availability for Dedicated and Partner Interconnect**, **2 Cloud Routers in distinct regions are required**. 
+        - **Custom Advertised Routes:** You can explicitly define which IP ranges (static routes or specific VPC subnets) the Cloud Router advertises to its BGP peers. This provides granular control over what parts of your GCP network are visible to your on-premises or other connected networks. You can also assign custom MED values to these advertised routes to influence path selection on the peer side.
+
+## BGP Configuration Details
+
+Each BGP session on a Cloud Router involves several key attributes:
+
+-   **Peer ASN:** The Autonomous System Number of the remote BGP peer.
+-   **Local ASN (Google ASN):** The ASN for your Cloud Router. Google assigns a private ASN (e.g., from the 64512-65534 range, or 16550 for Partner Interconnect) or you can use your own public ASN if you meet the requirements.
+-   **BGP Speaker IP Addresses (Link-Local IPs):**
+    *   For each BGP session, Cloud Router and the peer router use IP addresses from the `169.254.0.0/16` link-local address space to establish peering.
+    *   For HA VPN, these are typically auto-allocated from a `/30` range within `169.254.0.0/16` for each tunnel interface.
+    *   For Cloud Interconnect VLAN attachments, you can specify these or have Google auto-allocate them.
+-   **Route Priority / Multi-Exit Discriminator (MED):**
+    *   Cloud Router advertises a MED value for the routes it sends to BGP peers. This is known as the "base advertised route priority".
+    *   Default MED is 100 for routes advertised from GCP subnets. For custom advertised static IP routes, the default MED is 1000.
+    *   Lower MED values are preferred by BGP peers. You can customize this base priority per BGP session to influence how your on-premises network prefers paths into GCP (e.g., for active/passive setups).
+-   **Authentication (MD5):**
+    *   Cloud Router supports MD5 authentication for BGP sessions to enhance security by ensuring that BGP updates are only accepted from trusted peers.
+    *   You configure an MD5 authentication key (password) on both the Cloud Router BGP peer configuration and the corresponding on-premises BGP peer.
+
+## Custom Learned Routes
+
+-   **Route Reception:** Cloud Router learns routes advertised by its BGP peers (e.g., your on-premises router). These become "custom learned routes" in your VPC network's routing table.
+-   **Route Propagation:**
+    *   By default, learned routes are propagated according to the VPC network's dynamic routing mode (Regional or Global).
+    *   The best path for a given destination prefix learned from BGP peers is selected based on standard BGP path selection attributes (e.g., AS path length, MED if received from peer).
+-   **Influence on Learned Routes (Limited):**
+    *   GCP Cloud Router itself does not offer extensive inbound filtering or modification capabilities for learned routes directly (like route maps in traditional routers).
+    *   The primary way to influence which routes are learned and preferred from on-premises is by controlling what your on-premises router advertises and how it sets BGP attributes (like AS path prepending or MED values) on those advertisements.
+    *   If multiple paths exist to the same prefix from different BGP peers connected to the *same* Cloud Router, and all BGP attributes are equal, Cloud Router may use ECMP (Equal Cost Multi-Path) to distribute traffic if the paths are to different BGP peers.
+    *   Cloud Router **doesn't use ECMP across routes with different origin ASNs** if learned by a single Cloud Router instance. It prefers routes from the peer with the lowest ASN.
+-   **Viewing Learned Routes:** You can view learned routes in the Google Cloud Console under the Cloud Router details or via `gcloud compute routers get-status`.
+
+- For **99.99% availability for Dedicated and Partner Interconnect**, **2 Cloud Routers in distinct regions are required**.
 - To achieve this same 99.99% availability **with HA VPN, only a single Cloud Router in a single region is necessary**.
 - Cloud Router **doesn't use ECMP across routes with different origin ASNs**. For cases where you have multiple on-premises routers connected to a single Cloud Router, the **Cloud Router learns and propagates routes from the router with the lowest ASN**. Cloud Router ignores advertised routes from routers with higher ASNs, which might result in unexpected behavior. For example, you might have two on-premises routers advertise routes that are using two different Cloud VPN tunnels. You expect traffic to be load balanced between the tunnels, but Google Cloud uses only one of the tunnels because Cloud Router only propagated routes from the on-premises router with the lower ASN.
 
@@ -371,6 +530,41 @@ Bidirectional Forwarding Detection (BFD) is a network protocol that provides fas
 
 **Reference:**  
 [BFD for Cloud Router](https://cloud.google.com/network-connectivity/docs/router/concepts/bfd)
+
+# Branch Office Connectivity
+
+**SD-WAN Integration:**
+- Deploy SD-WAN appliances as Compute Engine instances
+- Use custom routes to direct traffic through SD-WAN
+- Supports multiple ISP connections for redundancy
+
+**Branch office patterns:**
+- **Hub-and-spoke:** Branch → Regional hub → GCP
+- **Direct connect:** Each branch with own VPN to GCP
+- **Mesh:** Branch-to-branch + branch-to-GCP connectivity
+
+**IPSec VPN for branches:**
+- Use HA VPN for 99.99% availability
+- Policy-based VPN for simple branch configs
+- Cloud Router for dynamic routing with branches
+
+# Network Virtual Appliances (NVA)
+
+**Policy-based routing for NVA:**
+- Route traffic through third-party security appliances
+- Use network tags to selectively route traffic
+- Common for firewalls, IDS/IPS, load balancers
+
+**NVA deployment patterns:**
+- **Inline:** All traffic passes through NVA (single point of failure)
+- **Out-of-band:** Mirror traffic to NVA for inspection
+- **Hub-and-spoke:** NVA in hub, spokes route through it
+
+**Configuration requirements:**
+- NVA VM must have IP forwarding enabled
+- Custom routes pointing to NVA instance
+- Appropriate firewall rules for NVA traffic
+- Health checks for NVA availability
 
 # Firewall rules
 
@@ -472,6 +666,29 @@ Outbound or egress traffic from a virtual machine is subject to **maximum networ
 - Both VPC peered networks must config the export and import of custom: static or dynamic routes.
 - The roles needed to create a VPC peering connection is **Project Owner** or **Editor** or **Network Admin**.
 - Transitive peering is not supported
+
+## Custom Route Import/Export over VPC Peering
+
+**Route sharing configuration:**
+- **Export custom routes:** Share routes from local VPC to peered VPC
+- **Import custom routes:** Accept routes from peered VPC
+- Both directions must be configured independently
+
+**Configuration steps:**
+1. Enable custom route export on source VPC peering
+2. Enable custom route import on destination VPC peering
+3. Verify route propagation in routing table
+
+**Best practices:**
+- Be selective with route sharing (avoid unnecessary routes)
+- Use route priorities to control traffic flow
+- Monitor route limits (max 25 peered networks)
+- Document route sharing for troubleshooting
+
+**Limitations:**
+- Subnet routes are always shared (cannot be disabled)
+- Default routes are not shared over peering
+- Route sharing is not transitive
 
 
 ![2023-01-29_682x329.png](images/gcp-pcne/vpc_peering.png)
@@ -734,6 +951,63 @@ You can also specify the maximum number of Pods per node when creating a node po
 
 Setting the maximum number of Pods at the node pool level overrides the cluster-level default maximum. If you do not configure a maximum number of Pods per node when you create the node pool, the cluster-level maximum applies.
 
+# GKE IP Address Planning
+
+## RFC 1918 vs Non-RFC 1918 in GKE
+
+**RFC 1918 (Recommended):**
+- Standard private IP ranges (10.x, 172.16-31.x, 192.168.x)
+- Full compatibility with all GKE features
+- Works with Private Google Access
+- Supported in all cluster types
+
+**Non-RFC 1918 in GKE:**
+- Use when RFC 1918 space is exhausted
+- **Limitations:**
+  - May not work with some Google services
+  - Limited Private Google Access support
+  - Requires careful routing configuration
+  - Not recommended for most use cases
+
+**PUPI (Privately Used Public IPs) in GKE:**
+- Public IP ranges used privately within cluster
+- **Use cases:**
+  - Large organizations with IP conflicts
+  - Hybrid environments with overlapping ranges
+- **Considerations:**
+  - Requires custom routing
+  - May conflict with internet routing
+  - Limited Google services compatibility
+
+## IPv6 in GKE
+
+**Dual-stack clusters:**
+- Pods get both IPv4 and IPv6 addresses
+- Services can be IPv4, IPv6, or dual-stack
+- Requires dual-stack subnet configuration
+
+**IPv6 considerations:**
+- External IPv6 addresses for internet connectivity
+- Internal IPv6 for VPC-internal communication
+- Load balancer IPv6 support required
+
+## IP Planning Best Practices
+
+**Sizing calculations:**
+- Default: 110 pods per node, /24 range per node (256 IPs)
+- Custom: Adjust pods per node based on workload needs
+- Plan for 30% growth buffer
+
+**Scale planning:**
+- Calculate total IPs needed: nodes × pods per node
+- Consider multiple node pools with different ranges
+- Plan for cluster expansion and new environments
+
+**IP exhaustion scenarios:**
+- Add additional Pod IP ranges to existing clusters
+- Create new node pools with new IP ranges
+- Use smaller Pod CIDR ranges (/27, /28) for efficiency
+
 # GKE Networking
 
 Two types of networking models:
@@ -838,6 +1112,34 @@ The object that the IP address is assigned to:
 3. Peering with Google:
     1. Direct peering
     2. Carrier peering
+
+# Google Peering Options
+
+**What is Peering:**
+- BGP routing relationship between networks
+- Exchange traffic directly without intermediaries
+- Different from Interconnect (dedicated physical connection)
+- Peering = routing agreement, Interconnect = physical infrastructure
+
+**Direct Peering:**
+- Direct BGP connection to Google's edge network
+- Requires meeting Google's peering requirements
+- Free data transfer for eligible traffic
+- Use case: Large ISPs, content providers
+
+**Verified Peering Provider:**
+- Indirect connection through verified partner
+- Lower requirements than direct peering
+- Partner manages BGP relationship with Google
+- Use case: Smaller organizations, easier setup
+
+**When to choose:**
+- Direct: High volume, meet peering requirements
+- Verified: Lower volume, simpler setup
+
+**Peering vs Interconnect:**
+- Peering: Internet traffic, public IPs, BGP routing
+- Interconnect: Private connectivity, RFC 1918 IPs, dedicated bandwidth
 
 ## Cloud VPN
 
@@ -1068,6 +1370,11 @@ gateway maps all of those packets to the same NAT IP address and port pair, rega
     - Manually can reserve multiple IPs
 - Destination is fixed to internet
 - Set Advanced Options
+    - **Customizing Timeouts:**
+        - **TCP Established Connection Idle Timeout:** (Default: 1200s) How long an established TCP connection can be idle before NAT closes it.
+        - **TCP Transitory Connection Idle Timeout:** (Default: 30s) How long a TCP connection that is in a transitory state (e.g., SYN-SENT, FIN-WAIT) can be idle.
+        - **UDP Mapping Idle Timeout:** (Default: 30s) How long a UDP mapping can be idle.
+        - **ICMP Mapping Idle Timeout:** (Default: 30s) How long an ICMP mapping can be idle.
     - Logging:
         - None
         - Transactions and errors
@@ -1075,7 +1382,6 @@ gateway maps all of those packets to the same NAT IP address and port pair, rega
         - Errors only
     - Enable dynamic port allocation
     - Enable Endpoint-Independent Mapping
-    - Timeouts by protocol
 
 ## NAT Logging
 One log entry can be generated for each of the following:
@@ -1084,15 +1390,40 @@ One log entry can be generated for each of the following:
 
 You can choose to log both kinds of events, or only one. 
 
+## Organization Policy Constraints for Cloud NAT
+
+To control the use of Cloud NAT within an organization, you can use the following organization policy constraints:
+
+-   **`constraints/compute.restrictCloudNat`**: 
+    *   Restricts the creation or update of Cloud NAT gateways based on specified conditions (e.g., allow only in certain projects/folders, or deny entirely).
+    *   Can be used with tags to allow/deny NAT for specific VPC networks.
+-   **`constraints/compute.requireCloudNat`**: 
+    *   Can be used to require that Cloud NAT is used for internet egress from VMs in specific projects/folders, often in conjunction with rules that block direct external IP assignment to VMs.
+-   **`constraints/compute.restrictCloudNatExternalIpAddresses`**:
+    *   Restricts the use of external IP addresses for Cloud NAT to only those that are explicitly allowed (e.g., from a pre-approved list of static IPs).
+    *   Helps in maintaining a consistent and known set of egress IPs for whitelisting purposes by external services.
+
+These constraints help enforce security and cost management policies related to internet egress.
+
 # Private NAT and Secure Web Proxy
 
 ## Private NAT
 
-Private NAT allows  to perform NAT for traffic between VPC networks or between on-premises and VPC networks, without exposing resources to the public internet. Unlike Cloud NAT, which is used for outbound internet access, Private NAT is used for private, internal connectivity.
+Private NAT performs NAT for traffic between VPC networks or on-premises without internet exposure.
 
-**Key use cases:**
-- Enable private connectivity between VPCs or from on-premises to GCP without using public IPs.
-- Use with Network Connectivity Center (NCC) to provide NAT between spokes in a hub-and-spoke topology.
+**Key differences vs Cloud NAT:**
+- Cloud NAT: VM → Internet
+- Private NAT: VPC ↔ VPC or On-premises ↔ VPC
+
+**Use cases:**
+- Hub-and-spoke with NCC: NAT between spokes
+- Overlapping IP ranges: Enable communication between VPCs with same CIDR
+- On-premises integration: NAT traffic from on-prem to GCP
+
+**Configuration:**
+- Requires NCC hub and router appliance
+- Configure NAT rules on router appliance
+- Used with hybrid connectivity (VPN/Interconnect)
 
 **Reference:**  
 [Private NAT documentation](https://cloud.google.com/network-connectivity/docs/network-connectivity-center/how-to/private-nat)
@@ -1196,7 +1527,7 @@ The two main classes of Partner Interconnect are **Layer 2 and Layer 3 Partner I
 3. Request a connection from your service provider. 
 4. Submit the pairing key and other connection details, such as the connection capacity and location. 
 5. Your service provider configures your connection; they must confirm that they can serve your requested capacity. 
-6. When the configuration is complete, you’ll receive an email.
+6. When the configuration is complete, you'll receive an email.
 7. In the VLAN attachment, activate your connection. After the connection is activated, it can start passing traffic.
 8. Configure the on-premises routers to establish a BGP session with your Cloud Router. 
 9. To configure your on-premises routers, use the VLAN ID, interface IP address, and peering IP address provided by the VLAN attachment.
@@ -1242,7 +1573,7 @@ Media Access Control Security (MACsec) is an IEEE 802.1AE standard for securing 
 ### Encryption by flavour
 - Dedicated Interconnect: between Google's peering edge router and an on-premises router.
 - Partner Interconnect: between Google's peering edge router and the service provider's peering edge router.
-- Cross Cloud Interconnect: between Google’s peering edge router and router run by remote cloud.
+- Cross Cloud Interconnect: between Google's peering edge router and router run by remote cloud.
 
 MACsec for Cloud Interconnect doesn't provide encryption in transit within Google. For stronger security, we recommend that you use MACsec with other network security protocols, such as IP Security (IPsec) and Transport Layer Security (TLS).
 
@@ -1255,6 +1586,52 @@ MACsec for Cloud Interconnect doesn't provide encryption in transit within Googl
 **Reference:**  
 [MACsec for Cloud Interconnect](https://cloud.google.com/network-connectivity/docs/interconnect/concepts/macsec)
 
+## HA VPN over Cloud Interconnect
+
+HA VPN over Cloud Interconnect provides an IPsec-encrypted, high-availability connection between your on-premises network and your Google Cloud VPC network, leveraging the private, dedicated bandwidth of Cloud Interconnect. This combines the security of VPN with the reliability and performance of Interconnect.
+
+**Purpose:**
+-   Encrypt traffic over a Dedicated or Partner Interconnect.
+-   Add an additional layer of security for sensitive workloads.
+-   Meet compliance requirements that mandate encryption over private connections.
+
+**Key Components:**
+1.  **Cloud Interconnect Connection:** A Dedicated or Partner Interconnect providing the underlying Layer 2 or Layer 3 connectivity.
+2.  **VLAN Attachments:** Logical connections over the Interconnect. You'll typically have redundant VLAN attachments for HA.
+3.  **HA VPN Gateway in GCP:** A regional Google Cloud resource providing two external IP addresses for VPN tunnel termination.
+4.  **Cloud Router(s) in GCP:** Used by both Cloud Interconnect (for BGP over VLANs) and HA VPN (for BGP over VPN tunnels) to exchange routes. Often, separate Cloud Routers are used for each function for clarity, or carefully configured BGP sessions on shared routers.
+5.  **On-premises VPN Gateway(s):** Your physical or virtual VPN devices in your data center.
+6.  **IPsec Tunnels:** Encrypted tunnels established between the HA VPN gateway in GCP and your on-premises VPN gateways. These tunnels run *over* the Cloud Interconnect connection.
+
+**Configuration Steps (High-Level):**
+1.  **Establish Cloud Interconnect:** Ensure your Dedicated or Partner Interconnect is provisioned and VLAN attachments are active. BGP sessions over these VLANs should be established with your on-premises routers, advertising on-premises routes to GCP.
+2.  **Create HA VPN Gateway:** In your GCP project, create an HA VPN gateway in the same region as your VLAN attachments.
+3.  **Configure Cloud Router for HA VPN:** Create a Cloud Router (or use an existing one, carefully configured) for the BGP sessions of the HA VPN. This Cloud Router will learn routes from your on-premises VPN gateway and advertise GCP VPC routes.
+4.  **Create VPN Tunnels:**
+    *   Define VPN tunnels on the GCP HA VPN gateway, pointing to the on-premises VPN gateway's IP addresses (which are reachable via the Interconnect).
+    *   Configure corresponding tunnels on your on-premises VPN gateway(s).
+    *   Use IKEv2 and a strong pre-shared key.
+5.  **Establish BGP Sessions over VPN Tunnels:**
+    *   Configure BGP sessions between the GCP Cloud Router (for HA VPN) and your on-premises VPN gateway(s) *through the VPN tunnels*.
+    *   These BGP sessions will exchange the actual workload prefixes.
+6.  **Route Advertisement & Prioritization:**
+    *   Ensure your on-premises network advertises its prefixes to GCP over the VPN BGP sessions.
+    *   GCP will advertise its VPC subnet prefixes to your on-premises network over the VPN BGP sessions.
+    *   You might need to adjust BGP metrics (e.g., MED values) if you want to prefer routes learned over the Interconnect directly vs. routes learned over the HA VPN (though typically, with HA VPN *over* Interconnect, the VPN path is the intended path for encrypted traffic).
+7.  **Firewall Rules:** Configure firewall rules in GCP to allow traffic from your on-premises network through the VPN tunnels to your VPC resources, and vice-versa.
+
+**Redundancy:**
+-   HA VPN inherently provides two interfaces and supports two tunnels for high availability.
+-   Redundant VLAN attachments for the underlying Cloud Interconnect are crucial.
+-   Redundant on-premises VPN gateways are recommended.
+
+**Considerations:**
+-   **IP Addressing:** The on-premises VPN gateway IP addresses must be reachable from GCP via the Cloud Interconnect path (e.g., private IPs advertised over Interconnect BGP).
+-   **MTU:** IPsec encapsulation adds overhead. Ensure your MTU settings are consistent across the path (VLAN attachments, VPN tunnels, on-premises devices) to avoid fragmentation. Typically, the MTU for VLAN attachments is 1440, 1460, or 1500. For HA VPN over Cloud Interconnect, you might need to adjust the MTU on your VMs or the VPN gateway. The gateway MTU for HA VPN tunnels is 1460 bytes.
+-   **Performance:** While Cloud Interconnect provides dedicated bandwidth, VPN encryption/decryption adds some processing overhead.
+
+**Reference:**
+-   [HA VPN over Cloud Interconnect overview](https://cloud.google.com/network-connectivity/docs/vpn/concepts/ha-vpn-over-interconnect)
 
 # Cloud Load Balancer
 
@@ -1402,7 +1779,38 @@ Cloud Load Balancing can route traffic to:
 - Network endpoint groups (NEG): a group of services or workloads.
 - Cloud Storage buckets
 
-Network Endpoint Groups (NEG)
+### Backend Service: Key Configuration Aspects
+
+When configuring a **Backend Service**, which is a central component of the load balancer, you define how traffic is distributed to backends and how much load they can handle. Key aspects to configure include:
+
+**1. Backends:**
+    - These are the groups of instances (MIGs) or endpoints (NEGs) that will receive traffic.
+    - **Types of NEGs:** (Already covered in detail later in the notes: Zonal, Internet, Serverless, Private Service Connect, Hybrid connectivity)
+
+**2. Balancing Modes:**
+    Determine how the load balancer distributes new traffic to healthy backend instances or endpoints.
+    - **`RATE` (RPS - Requests Per Second):** For backends that handle a certain number of requests per second. You must specify `max-rate` (for zonal/regional MIGs) or `max-rate-per-instance`/`max-rate-per-endpoint`. Ideal for Application Load Balancers.
+    - **`UTILIZATION` (CPU Utilization):** Keeps the average CPU utilization of backends (MIGs) below a target (e.g., 0.8 for 80%). The load balancer distributes traffic to not exceed this threshold. Common for Application Load Balancers with MIGs.
+    - **`CONNECTION`:** For backends that handle a certain number of concurrent TCP/UDP connections. Used with `max-connections` (or `max-connections-per-instance`/`max-connections-per-endpoint`). Typical for Network Load Balancers.
+
+**3. Serving Capacity (Capacity Scaler):**
+    - A multiplier (from 0.0 to 1.0) that adjusts the fraction of the maximum configured capacity (RPS, CPU, Connections) that a backend can handle.
+    - **`capacity-scaler`**: If set to `0.5`, the backend will only receive 50% of the traffic it could handle according to its balancing mode and maximum capacity. If `0.0`, no new traffic is sent (useful for draining connections). `1.0` is full capacity.
+
+**4. Session Affinity:**
+    - (Already covered in the notes) Ensures that requests from the same client are directed to the same backend. Options: `NONE`, `CLIENT_IP`, `GENERATED_COOKIE`, `HTTP_COOKIE`, `HEADER_FIELD`.
+
+**5. Health Checks:**
+    - (Already covered in the notes) Essential for the load balancer to send traffic only to healthy backends. Configured at the Backend Service level.
+
+**6. Other Settings:**
+    - **Timeout:** Backend response timeout.
+    - **Connection Draining (Deregistration Delay):** Time for existing connections to complete before removing an unhealthy backend or during an update. (Mentioned in your AWS notes, the concept is similar).
+    - **Cloud CDN:** Enable for Application Load Balancers (already covered).
+    - **IAP (Identity-Aware Proxy):** To protect access (already covered).
+    - **Security Policy (Cloud Armor):** To apply security policies (already covered).
+
+### Network Endpoint Groups (NEG)
 
 - A NEG is a configuration object that specifies a group of backend endpoints or services.
 - There are five types of NEGs:
@@ -1412,8 +1820,24 @@ Network Endpoint Groups (NEG)
     - **Private Service Connect:** contains a single endpoint. That endpoint that resolves to either a Google-managed regional API endpoint or a managed service published by using Private Service Connect.
     - **Hybrid connectivity:** points to Traffic Director services that run outside of Google Cloud. Add the hybrid connectivity NEGs to a hybrid load balancer backend. A hybrid connectivity NEG must only include endpoints outside Google Cloud. Traffic might be dropped if a hybrid NEG includes endpoints for resources within a Google Cloud VPC network.
 
-
 NOTE:  In GKE you can use either managed instance groups or network endpoint groups, but container-native load balancing only uses network endpoint groups. In GKE workloads, autoscaling is typically accomplished using a HorizontalPodAutoscaler, though VerticalPodAutoscaler and MultidimPodAutoscaler are possible alternatives. GKE cluster autoscaling occurs based on the resource demands and scheduling of pods across all workloads using a given node pool.
+
+## Protocol Forwarding
+
+**Protocol Forwarding** is used to forward traffic based on IP protocol and port from a regional external IP address directly to a single **Target Instance** in a specific zone within the same region.
+
+- **Not a load balancer:** It does not distribute traffic among multiple instances or perform health checks.
+- **Use cases:**
+    - Running your own VPN gateway software on a VM.
+    - Setting up virtual appliance gateways.
+    - When you need a specific regional external IP to point to a particular VM for non-TCP/UDP protocols (e.g., GRE).
+- **Components:**
+    - **Regional External Forwarding Rule:** Defines the external IP, IP protocol (TCP, UDP, ESP, GRE, ICMP, L3_DEFAULT), and optionally ports.
+    - **Target Instance:** Specifies the VM that will receive the traffic. The VM must be in the same region as the forwarding rule.
+- **Limitations:**
+    - Only for regional external traffic.
+    - Supports a single backend (the target instance).
+    - The VM must have IP forwarding enabled (`canIpForward=true`) if it is to forward packets.
 
 ## Hybrid LB
 
@@ -1556,215 +1980,184 @@ Three options depending the location of the next hop LB:
             - HTTPs redirect on
     - Set FE with HTTP config.
 
+### Application LB: Draining, Redirecting, and Troubleshooting
+
+Application Load Balancers (Global/Regional External HTTP(S) LB, Internal HTTP(S) LB) provide mechanisms for graceful maintenance and traffic management.
+
+**Connection Draining:**
+-   **Purpose:** Ensures that existing, in-flight requests are completed before a backend instance/endpoint is removed from service (e.g., during instance group updates, scaling down, or when an instance becomes unhealthy).
+-   **Configuration:** Set a `connectionDraining.drainingTimeoutSec` (0-3600 seconds) on the Backend Service.
+    -   When an instance is marked for removal, the load balancer stops sending new requests to it.
+    -   It waits for the specified timeout for existing connections to complete.
+    -   After the timeout, any remaining connections are terminated.
+-   **Use Cases:** Minimizing impact during rolling updates, instance replacements, or manual backend removal.
+-   **Troubleshooting Draining Issues:**
+    *   **Premature connection termination:** Check if `drainingTimeoutSec` is sufficient for long-lived requests.
+    *   **Backends not draining:** Verify health check status; unhealthy instances are removed without full draining. Ensure instance group autohealing/update policies respect the draining period.
+    *   **Monitoring:** Check `spilled_requests_count` or `backend_request_count` with `response_code_class=5XX` during draining, which might indicate issues.
+
+**Redirecting Traffic:**
+-   **URL Maps:** The core of traffic management for Application Load Balancers. URL maps allow:
+    *   **HTTP to HTTPS Redirects:** Configure a rule to redirect HTTP traffic to HTTPS. Typically involves a separate forwarding rule and target proxy for HTTP, with a URL map action to redirect.
+    *   **Path/Host based Redirects:** Redirect requests based on host or path to different URLs or services.
+    *   **Conditional Redirects:** Use advanced routing rules (CEL expressions) for more complex redirect logic.
+-   **`defaultUrlRedirect` on Forwarding Rule:** A simpler way to redirect all traffic from one forwarding rule to another (e.g., for domain aliasing).
+-   **Maintenance Pages:** Redirect traffic to a static maintenance page (e.g., in a Cloud Storage bucket backend) during planned outages.
+    *   Change the default backend service in the URL map temporarily.
+    *   Alternatively, use traffic splitting to send a small percentage of traffic to the live service for testing while most users see the maintenance page.
+-   **Troubleshooting Redirect Issues:**
+    *   **Redirect loops:** Carefully check redirect configurations to avoid `ERR_TOO_MANY_REDIRECTS`.
+    *   **Incorrect target URL:** Verify the destination of the redirect.
+    *   **URL map rule order:** Ensure rules are evaluated in the intended order. More specific rules should have higher precedence (or be ordered correctly in path-based routing).
+    *   **Caching:** Client-side or CDN caching can sometimes serve stale redirect responses.
+
 # Cloud DNS
 
-**A simple DNS primer**
+Cloud DNS is a scalable, reliable, and managed authoritative Domain Name System (DNS) service running on the same infrastructure as Google. It offers 100% SLA. (Cloud Domains is a separate product for domain registration).
 
-1. A client makes a DNS request to obtain an IP address; the request is sent to a recursive resolver.
-2. A recursive resolver requests the IP address from a name server.
-3. The name server responds with the IP address.
-4. The recursive resolver sends the IP to the client.
+## Core DNS Concepts
 
-**Features**
+### Features
+- High scalability and reliability.
+- Low-latency access to DNS records from anywhere in the world.
 
-- High scalable, reliable and managed DNS
-- 100% SLA
-- Cloud domains is another product (DNS Registrar)
+### Types of DNS in GCP
+1.  **Internal DNS:**
+    *   Automatically created names for VMs: `[INSTANCE_NAME].[ZONE].c.[PROJECT_ID].internal`.
+    *   Resolved by metadata server (Linux) or default gateway (Windows).
+2.  **Cloud DNS Private Zones:**
+    *   Visible only within authorized VPC networks or hybrid environments.
+    *   Used for internal naming (e.g., `dev.gcp.example.com`).
+3.  **Cloud DNS Public Zones:**
+    *   Visible to the public internet.
+    *   Used for external-facing domains (e.g., `www.example.com`).
 
-### Type of DNS in GCP
+### Managed Zones
+- A container for DNS records (e.g., A, AAAA, CNAME, MX, TXT, SRV, etc.) that share the same DNS name suffix (e.g., `example.com`).
+- **Creating Private Zones:**
+    *   Define zone name, DNS name, and authorize VPC networks for access.
+    *   Populate with records mapping to internal IP addresses.
+- **Creating Public Zones:**
+    *   Define zone name and DNS name.
+    *   Requires updating NS records at your domain registrar to point to Cloud DNS name servers.
 
-1. Internal DNS
-- Internal DNS and Cloud DNS are different offerings.
-- Internal DNS names are names that Google Cloud creates automatically.
-- Format: `[INSTANCE_NAME].[ZONE].c.[PROJECT_ID].internal`
-- On **Linux**, by default, the VM's metadata server (169.254.169.254) resolves internal DNS names.
-- On **Windows**, by default, the subnet's default gateway resolves internal DNS names.
+### Managing DNS Records
+- Cloud DNS supports various record types, including:
+    *   **A:** Maps a hostname to an IPv4 address.
+    *   **AAAA:** Maps a hostname to an IPv6 address.
+    *   **CNAME:** Alias for another domain name.
+    *   **MX:** Mail exchange records for email routing.
+    *   **TXT:** Text records for various purposes (e.g., SPF, DKIM, domain verification).
+    *   **PTR:** Pointer records for reverse DNS lookups.
+    *   **SRV:** Service records.
+- Records are added, modified, or deleted within a managed zone.
 
-2. Private Zone
-- A private DNS zone contains DNS records that are only visible internally within your GCP network(s) or hybrid.
-- Supports DNS Forwarding & DNS Peering.
+## DNS Policies
 
-3. Public Zone
-- A public zone is visible to the internet. Usually purchased through a Registrar. 
+Cloud DNS allows configuring policies to influence DNS resolution behavior.
 
-### Managed Zones in DNS
+1.  **Server Policies:**
+    *   Apply private DNS configuration to a VPC network.
+    *   Used for hybrid DNS setups (see Hybrid DNS Strategies).
+2.  **Response Policies:**
+    *   Modify DNS resolver behavior with custom rules (e.g., for security or to block specific domains).
+    *   Rules can override standard resolution for specified queries within your VPC.
+3.  **Routing Policies:**
+    *   Steer traffic based on specific criteria for records within a zone.
+    *   **Weighted Round Robin (WRR):** Distribute traffic based on weights.
+    *   **Geolocation:** Route traffic based on the source region of the query.
+        ```bash
+        # Example: Geolocation routing policy
+        gcloud dns record-sets create geo.example.com \
+          --ttl=5 --type=A --zone=example \
+          --routing-policy-type=GEO \
+          --routing-policy-data="us-east1=1.2.3.4;europe-west2=5.6.7.8"
+        ```
+    *   **Geofencing and Failover:** Set up active-backup configurations (private zones only).
+    *   *Caveat:* Only one routing policy type per record set; nesting is not supported.
 
-- A container that contains all the records that share the same DNS domain
+## Hybrid and Multi-VPC DNS Strategies
 
-**Private Zones**
+For integrating on-premises DNS with Google Cloud or managing DNS across multiple VPCs.
 
-- Private zones provide a namespace that is visible only inside the VPC or hybrid network environment.
-- For example, an organization would use a private zone for a domain dev.gcp.example.com, which is reachable only from within the company intranet.
-- Creation
-    - Include zone name and domain
-    - Select which VPCs can access this zone.
-    - Create records with the internal IPs
-    
-**Public zones**
+### DNS Forwarding
+- **Outbound Forwarding:** Queries from your VPC network for specific DNS zones are forwarded to your on-premises (or other external) DNS servers.
+    *   Configured by creating a "Forwarding Zone" in Cloud DNS that points to your external resolvers.
+- **Inbound Forwarding:** Allows on-premises systems to resolve names in your Cloud DNS private zones.
+    *   Configured using a DNS server policy with inbound forwarding enabled. This provides IP addresses in your VPC network that on-premises systems can query.
+- *Use Case:* Integrating on-premises DNS with Cloud DNS private zones, allowing resources in GCP to resolve on-prem names and vice-versa.
+- *Limitation:* Cannot be used for direct project-to-project forwarding between different Google Cloud projects (use DNS Peering for that).
 
-- Public zones provide authoritative DNS resolution to clients on the public internet.
-- For example, a business would use a public zone for its external website, cymbal.com accessible, which is directly from the internet.
-- Creation
-    - Include zone name and domain
-    - Need to update the name servers to forward queries to Cloud DNS name servers at your Registrar Provider (e.g. GoDaddy)
-    - Allow DNSSec available
-- Migrate public zones
-    - Step 1: Create public zone in Cloud DNS
-    - Step 2: Export DNS records in a supported format (BIND or YAML records format), from On-prem network.
-        - delete all existing flag to remove all the SOA before importing
-    - Step 3. Import DNS records in Cloud DNS
-    - Step 4: Update name servers to Cloud DNS name servers.
+### DNS Server Policies for Hybrid DNS
+- As mentioned above, server policies are key for hybrid DNS:
+    *   **Outbound Server Policy:** Forwards all DNS queries from a VPC network (not just specific zones) to alternative name servers (e.g., on-premises). Can disable internal DNS.
+    *   **Inbound Server Policy:** Creates DNS entry points in GCP that on-premises systems can use to resolve GCP private DNS names.
 
-## Supported Cloud DNS policies
-After you create the DNS zones and artifacts needed for lookups, create Cloud DNS policies.
-
-1. **Server policies** apply private DNS configuration to a VPC network.
-2. **Response policies** enable you to modify the behavior of the DNS resolver by using rules that you define.
-3. **Routing policies:** steer traffic based on geolocation or round robin.
-
-### Server policies
-
-- Use server policies to set up hybrid deployments for DNS resolutions.
-- Each VPC network can have one DNS server policy.
-- Types depends on the direction of DNS resolutions: inbound, outbound or both
-    - For workloads that use an on-premises DNS resolver, use an outbound server policy to set up DNS forwarding zones.
-    - If you want on-premises workloads to resolve names on Google Cloud, set up an inbound server policy.
-
-### Response policies
-
-- A response policy is a Cloud DNS private zone concept that contains **rules instead of records.**
-- Lets you introduce customized rules in DNS servers within your network **that the DNS resolver consults during lookups.**
-- If a rule in the response policy affects the incoming query, it's processed (otherwise, the lookup proceeds normally).
-- The rules **enable you to return modified results to DNS clients**.
-
-### Routing policies
-
-- DNS routing policies steer your traffic based on specific criteria.
-- Three types of DNS routing policies:
-    1. **Weighted round robin**: lets you specify different weights per DNS target.
-    2. **Geolocation:** lets you map the traffic that originates from Google Cloud regions to specific DNS targets.
-    
-    ```bash
-    #define a DNS Record of type A pointing to the IP of the web server in US when the traffic comes from us-east1
-    # in the case of a different region, it will resolve the closest one.
-    # STEP 1: Create Zone
-    gcloud dns managed-zones create example --description=test --dns-name=example.com --networks=default --visibility=private
-    # Step 2: Create routing policy
-    gcloud dns record-sets create geo.example.com \
-    --ttl=5 --type=A --zone=example \
-    --routing-policy-type=GEO \
-    --routing-policy-data="us-east1=$US_WEB_IP;europe-west2=$EUROPE_WEB_IP"
-    ```
-    
-    ![Untitled](images/gcp-pcne/dns_geo.png)
-    
-    3. **Geofencing and failover:** lets you set up active backup configurations (only for private zones)
-
-    **Routing policy caveats**
-    
-    1. Only one type of routing policy can be applied to a resource record set at a time.
-    2. Nesting or otherwise combining routing policies is not supported.
-    
-
-### DNS Forwarding & DNS Peering
-
-- DNS Forwarding for hybrid computing, send the DNS request to on-prem or viceversa
-    - Inbound (from on-prem to Cloud VPC)
-    - Outbound (from Cloud VPC to On-prem)
-    - **Cannot** be used between two different Google cloud projects environments
-    - Applies to **specific domains entries**
-- As an alternative to DNS Forwarding we can use DNS Server Policy (Inbound or outbound)
-    - it will apply to all the DNS queries
-- DNS Peering extends the scope of the private zones
-    - Connect to VPC Network to share DNS services
-    - NOTE this is not VPC Peering
-- DNS Peering is recommended to avoid outbound DNS forwarding from multiple VPCs which can cause problems with return traffic. DNS peering allows a single forwarding zone to be associated with a single VPC and then other VPCs to have their requests forwarded by DNS peering with the forwarding zone.
-
-Separate managed zones must be created for different domains, public vs private DNS, DNS
-peering, or DNS forwarding.
-
-## Summary of the different config options:
-1.  🔐 Private Zone
-    - Cloud DNS Private zones support DNS services for a GCP Project. 
-    - VPCs in the same project can use the same name servers.
-2. 🔁 DNS Forwarding for Private Zones
-    - Overrides normal DNS resolution of the specified zones.
-    - Instead, queries for the specified zones are forwarded to the listed forwarding targets.
-3. 🔄 DNS Peering for Private Zones
-    - DNS peering lets you send requests for records that come from one zone's namespace to another VPC network.
-4. 📤 DNS Policy Outbound
-    - When enabled in Cloud DNS, forwards all DNS requests for a VPC network to name server targets.
-    - Disables internal DNS for the selected Networks.
-5. 📥 DNS Policy Inbound
-    - Create an inbound DNS Policy to allow inbound connections from on-premises systems to use that network's VPC name resolution order.
-    
-NOTE: Cloud DNS doesn't support zone transfers, so you cannot use zone transfers to synchronize DNS records with your on-premises DNS servers.
-
-## DNS Security
-
-- Protect Public domains zone from DNS spoofing
-    - Public records DNSKEY with the public keys and signatures RRSIG to authenticate your zone's content in the registrar setup
-    - In the public zone you should add the DS (delegation signer) record in the domain
-    - Assure that your DNS clients is able to tackle with DNSSEc
-    - There is also a Transfer mode where you are moving the DNS, before importing the records
-        - Add the DS Records at the source and update the NS to Cloud DNS, and then activate DNSSEC
-    
-
-### Removing DNSSEC
-To resolve the issue of DNSSEC validating resolvers being unable to resolve names in your Cloud DNS-managed zone, you should perform the following steps:
-
-1. Check the state of your DNSSEC configuration in the Cloud DNS console: Make sure that you have correctly disabled DNSSEC for the zone, and that the change has taken effect.
-2. Check the state of the DS records: Confirm that the DS records have been properly removed from the zone file, and that they have been purged from the cache.
-3. Check the state of your domain registrar: Make sure that the domain registrar is not still configured to use DNSSEC, as this may be the source of the issue. You can check the DNSSEC settings for your domain at your domain registrar's control panel.
-4. Check the state of your name servers: Confirm that your name servers are properly configured and are returning the correct information for your zone.
-5. Check for other issues with your network: Consider checking for other issues with your network that may be affecting the resolution of your names, such as network congestion or routing issues.
-
-### Summary of DNSSEC
-
-1️⃣ **Cloud DNS SECurity for Public Zones**
-- DNS zone for your domain must serve special DNSSEC records for public keys (DNSKEY) and signatures (RRSIG) to authenticate your zone's contents.
-
-2️⃣ **How to enable and disable DNSSEC**
-- Activate or Disable DNSSEC at your domain registrar by adding a DS record in the zone to be validated.
-When DNSSEC is active, clients must use a resolver that supports DNSSEC.
-
-3️⃣ **Migrate Domain to Cloud DNS with DNSSEC**
-- Turn off DNSSEC and re-enable after the transfer.
-Understand how to use the Google Cloud DNS DNSSEC "Transfer" and "Import" features.
-
-
-## Querying order for DNS
-
-1. DNS Server Policy forwarding rule
-2. Private DNS forwarding zones
-3. Private Zones and peering zones
-4. Compute engine internal DNS
-5. Queries public zones
-
-## Other notes about DNS
-
-- Shared VPC⇒ Recommended to create the zone in the host project and then add the authorized networks
-
-## Advanced Cloud DNS Configuration
-
-Cloud DNS supports advanced scenarios for hybrid and containerized environments.
+### DNS Peering
+- Allows a private DNS zone in one VPC network (producer network) to be queried by another VPC network (consumer network).
+- Extends the scope of private zones across different VPCs (even in different projects).
+- Useful for shared services or centralized DNS management.
+- *Note:* This is different from VPC Network Peering.
 
 ### Split-Horizon DNS
-- Serve different DNS responses based on the source of the query (e.g., internal vs. external clients).
-- Achieved by creating separate public and private zones for the same domain.
+- Presenting different DNS information for the same domain name depending on the origin of the query (internal vs. external).
+- Achieved by creating:
+    *   A **public zone** for `example.com` with public IP addresses.
+    *   A **private zone** for `example.com` (authorized for your VPCs) with internal IP addresses.
+- Internal clients resolve internal IPs, external clients resolve public IPs.
+
+## DNS Security (DNSSEC)
+
+DNSSEC protects against DNS spoofing and cache poisoning by adding cryptographic signatures to DNS records.
+
+- **Enabling DNSSEC for Public Zones:**
+    *   Cloud DNS manages the signing of your zone (DNSKEY, RRSIG records).
+    *   You must add a DS (Delegation Signer) record at your domain registrar, which points to the public keys in your Cloud DNS zone.
+    *   Clients must use DNSSEC-validating resolvers.
+- **Disabling DNSSEC:**
+    *   Remove the DS record from your registrar first.
+    *   Then disable DNSSEC in the Cloud DNS zone configuration.
+- **Migrating with DNSSEC:**
+    *   **Option 1 (Recommended):** Disable DNSSEC at the old provider, transfer the domain and records, then re-enable DNSSEC on Cloud DNS and add the new DS record at the registrar.
+    *   **Option 2 (Transfer Mode):** Cloud DNS has a "Transfer" mode for DNSSEC. Configure DNSSEC in transfer mode, get DS records for Cloud DNS, add them to your registrar *before* changing NS records. Once NS records point to Cloud DNS, complete the transfer by switching DNSSEC to "On".
+
+## Migrating to Cloud DNS
+
+Primarily for public zones, but private zone concepts are similar if moving from another internal DNS.
+1.  **Create Managed Zone(s) in Cloud DNS:** Replicate your existing zone structure (public or private).
+2.  **Export Records:** From your current DNS provider, export records in a standard format (BIND zone file or YAML).
+3.  **Import Records:** Import the exported records into your Cloud DNS managed zone(s).
+    *   Use `gcloud dns record-sets import` or the console.
+    *   Review and test imported records.
+4.  **Update Name Servers (for Public Zones):** At your domain registrar, change the NS records for your domain to point to the Cloud DNS name servers assigned to your public zone.
+5.  **Testing:** After DNS propagation, test resolution thoroughly.
+6.  **Decommission Old DNS:** Once confident, decommission your old DNS service.
+
+## Cloud DNS for GKE
 
 ### External-DNS Operator for GKE
-- Automate DNS record management for Kubernetes services using the external-dns operator.
-- Automatically creates, updates, and deletes DNS records as services are deployed or removed.
+- Automates the creation and management of DNS records in Cloud DNS for Kubernetes Ingress and Service resources.
+- When you expose a service via Ingress or a LoadBalancer Service in GKE, External-DNS can automatically:
+    *   Create A records in a Cloud DNS public zone pointing to the external IP of the Ingress/LB.
+    *   Create CNAME records.
+- Requires configuring the operator with permissions to manage Cloud DNS records in your project.
 - [External-DNS for GKE documentation](https://cloud.google.com/kubernetes-engine/docs/how-to/external-dns)
 
-### Migrating Public Zones
-- Steps:
-  1. Create the public zone in Cloud DNS.
-  2. Export DNS records from the current provider (BIND or YAML format).
-  3. Import records into Cloud DNS.
-  4. Update registrar to use Cloud DNS name servers.
-- [Migration guide](https://cloud.google.com/dns/docs/migrating-to-cloud-dns)
+## Other Considerations
+
+### Shared VPC
+- For Shared VPC environments, it's generally recommended to create and manage Cloud DNS zones (especially private zones) in the **host project**.
+- Service projects can then be authorized to use these centrally managed private zones.
+
+### DNS Querying Order (within a VPC network)
+When a VM in a VPC network makes a DNS query, Google Cloud attempts to resolve the name in the following order:
+1.  **DNS Server Policy (Outbound Forwarding):** If an outbound server policy is configured for the VPC network and matches the query, it's forwarded to the specified alternative name servers.
+2.  **Private DNS Forwarding Zones:** If the query matches a configured Cloud DNS forwarding zone, it's sent to that zone's targets.
+3.  **Cloud DNS Private Zones:** If the query matches a private zone authorized for the VPC network (including peered zones).
+4.  **Compute Engine Internal DNS:** For `*.internal` names.
+5.  **Cloud DNS Public Zones / Public Internet:** If not resolved by any of the above, the query is resolved against public DNS servers.
+
+*Note: Cloud DNS does not support traditional zone transfers (AXFR/IXFR) for synchronizing with on-premises DNS servers. Hybrid integration relies on forwarding.*
 
 # Cloud Content Delivery Network (CDN)
 
@@ -1772,7 +2165,12 @@ Cloud DNS supports advanced scenarios for hybrid and containerized environments.
 - Requirements
     - Premium Network Tier
     - Attached to a Global HTTP(s) LB
-    - Content can be sourced from various types of backends (AKA origin servers): instance groups, NEGs, and GCS Buckets
+    - Content can be sourced from various types of backends (AKA origin servers): 
+        - Managed Instance Groups (MIGs)
+        - Zonal Network Endpoint Groups (NEGs) (for GCE VMs or GKE Pods)
+        - Serverless NEGs (for Cloud Run, App Engine, Cloud Functions)
+        - Cloud Storage Buckets
+        - Internet NEGs (for external origins)
     - Edge Location Cache Server
 - Content: image, video, audio and other (PDF, ZIP) up to 5TB in size.
 - Cache hit miss (if the data is no in the CDN cache, it goes to the original source)
@@ -1858,6 +2256,15 @@ USE_ORIGIN_HEADERS strictly uses the Cache-Control headers for controlling the c
 
 ## External Origins
 
+Cloud CDN can cache content from origins outside of Google Cloud. These are configured as backends on your external HTTP(S) load balancer using **Internet Network Endpoint Groups (Internet NEGs)**. An Internet NEG defines an external backend by its FQDN or IP address and port.
+
+- **Use Cases for External Origins with CDN:**
+    - Caching content from your own on-premises data centers.
+    - Caching content from third-party object storage (e.g., AWS S3, Azure Blob Storage).
+    - Caching content from any publicly accessible HTTP server.
+
+**CDN Interconnect** (as previously mentioned) can further optimize cache-fill costs when using external origins by providing dedicated, discounted connectivity to select CDN providers or your own deployments.
+
 CDN Interconnect lets you:
 
 - Select third-party Cloud CDN providers to establish Direct Interconnect links at edge locations in the Google network.
@@ -1873,49 +2280,70 @@ Typical use cases for CDN Interconnect
 
 # Cloud Armor
 
-- Network security Product
-- WAF + L3-L7 DDoS attack preemtive
-- Intelligent filtering not just IP/port → Lots of customization with a custom rules language
-- ML based adaptative filtering can be enabled
-- Works with Cloud Load Balancing
-- Need an Organization Node to be able to enable it
-- Predefined rulesets against OWASP Top 10 Webapps vulnerabilities (SQLi, XSS, insecure deserialization)
-- Allow blocking traffic originating from specific countries and regions
-- It basically works creating security policies: What to do [the action], when to do it [the condition], and where to apply the rule [the target]
-- Control access to your GCP resources at your network's edge
-- Use it for protecting your non-CDN HTTP LB
-- Rate limiting
-- Creating a security policy 
-    - Set a name
-    - Set a policy type:
-        - Backend security (+ protección)
-        - Edge security
-    - Set default rule action
-        - Allow
-        - Deny → you should indicate the returning HTTP Status (403, 404, 502)
-    - Add policy to targets
-        - Our LBs
-    - Set advance configuration
-        - Enable adaptative protection flag
-- Adding more rules:
-    - Set name
-    - Set condition
-        - Basic (IP Address/Range only)
-        - Advanced
-    - Set match
-        - IP range
-    - Set action:
-        - allow
-        - Deny
-        - Throttle
-        - Others
-    - Set previously (low number higher priority)
-    
-    NOTE: Be aware that if you delete the default policy, all the rules will be deleted.
-    
-- When selecting advanced in the condition you can do some scripting to match the requests.
+Cloud Armor is a network security service that provides defense against Distributed Denial of Service (DDoS) attacks and web application attacks (WAF). It works with Google Cloud external load balancers to protect your applications and services.
 
-- There exists a Standard and an Enterprise version
+**Core Concepts:**
+
+1.  **Security Policies:**
+    *   Containers for a set of rules that define how traffic is inspected and what action to take.
+    *   Each policy has a **default rule** (lowest priority, typically `deny` or `allow`) that applies if no other rule matches.
+    *   Rules within a policy are evaluated in **priority order** (lower number = higher priority).
+    *   **Policy Types:**
+        *   **Backend Security Policy:** Applied to Backend Services of supported load balancers (Global/Regional External HTTP(S) LB, SSL Proxy, TCP Proxy). Protects applications at L7 or L4.
+        *   **Edge Security Policy:** Applied to services at Google's network edge. 
+            *   For **Cloud CDN backends (buckets/services)**: Provides WAF capabilities at the edge before traffic hits the CDN cache or origin.
+            *   For **Network Edge services (External IP addresses of LBs or VMs)**: Provides L3/L4 DDoS mitigation and access control for specific public IPs. This is also known as a **Network Edge Security Policy**.
+
+2.  **Rules:**
+    *   **Match Condition:** Defines the traffic to which the rule applies. Can be basic (IP address/range) or advanced using Common Expression Language (CEL) for complex expressions (e.g., `request.path.matches('/admin')`, `request.headers['user-agent'].contains('badbot')`).
+    *   **Action:** What to do when traffic matches:
+        *   `allow`: Permit the request.
+        *   `deny(STATUS)`: Block the request with a specific HTTP status (e.g., `deny(403)`, `deny(404)`, `deny(502)`).
+        *   `throttle`: Apply rate limiting.
+        *   `redirect`: Redirect to a different URL (supports Google reCAPTCHA Enterprise for bot verification).
+    *   **Priority:** Determines evaluation order.
+
+3.  **Targets:**
+    *   Security policies are attached to target resources. For Backend Security Policies, the target is a Backend Service. For Edge Security Policies, targets can be Cloud CDN enabled backend services/buckets or external IP addresses.
+
+**Key Features & Configuration Considerations:**
+
+*   **Web Application Firewall (WAF) Rules:**
+    *   **Preconfigured WAF Rules:** Address common web attacks (OWASP Top 10) like SQL injection (SQLi), Cross-Site Scripting (XSS), Remote File Inclusion (RFI), etc. Can be enabled with rules like `evaluatePreconfiguredExpr('sqli-stable')` or `evaluatePreconfiguredExpr('xss-stable')`.
+    *   **Custom WAF Rules:** Use CEL to define fine-grained rules based on request attributes (headers, path, query params, method, etc.).
+
+*   **DDoS Protection & Service Tiers:**
+    *   **Cloud Armor Standard:** Provides always-on protection against common network and protocol-based DDoS attacks for all external load balancers. WAF capabilities are pay-as-you-go.
+    *   **Cloud Armor Managed Protection Plus (Enterprise Tier):** Subscription-based service offering:
+        *   **Advanced Network DDoS Protection:** Higher volume protection, faster DART (DDoS Attack Response Team) engagement.
+        *   **Adaptive Protection (L7 DDoS):** Uses machine learning to detect and help mitigate L7 DDoS attacks by learning traffic patterns and suggesting protective rules.
+        *   **Threat Intelligence:** Integrates feeds of malicious IPs (e.g., Tor exit nodes, known attacking IPs) that can be blocked. Use `evaluateThreatIntelligence('iplist-name')`.
+        *   WAF rules and policies included without per-policy/per-rule fees.
+        *   DDoS response support and bill protection.
+
+*   **Rate Limiting:**
+    *   Limits the number of requests from a client IP address or a client identified by other means (e.g., JA3 fingerprint, reCAPTCHA token) over configurable time windows.
+    *   Helps prevent abuse, brute-force attacks, and scraping.
+    *   Action type: `throttle`.
+    *   Can also ban clients exceeding thresholds for a period (`exceed_action: 'deny'`).
+
+*   **Bot Management:**
+    *   Integrates with **Google Cloud reCAPTCHA Enterprise** to distinguish between human users and bots.
+    *   Allows rules based on reCAPTCHA token validity, score, and other signals.
+    *   Can redirect suspicious traffic to reCAPTCHA assessment or block outright.
+
+*   **Geo-based Access Control:**
+    *   Allow or deny traffic based on the geographic origin (country/region) of the request using `origin.region_code == 'US' `.
+
+*   **Attaching Policies:**
+    *   Backend Security Policies are attached to Backend Services.
+    *   Edge Security Policies are attached to CDN-enabled Backend Services/Buckets or directly to Forwarding Rules (for Network Edge protection of specific IPs).
+
+*   **Logging and Monitoring:**
+    *   Requests allowed/denied by Cloud Armor are logged in Cloud Logging.
+    *   Provides visibility into threats and policy effectiveness.
+
+**Need an Organization Node to be able to enable Managed Protection Plus.**
 
 # Cloud IDS
 
@@ -1983,9 +2411,14 @@ Typical use cases for CDN Interconnect
 
 ## Network Service Tier
 
-Premium ⇒ It arrives to google pretty much faster
+Premium ⇒ Global routing, required for global LB/CDN, higher cost
 
-Standard ⇒ It arrives in more hops to google (not recommended, only for very sensitive to cost customers). It uses ISPs network. If you are not going to use CDN or having multiple regions.
+Standard ⇒ Regional routing, ISP networks, lower cost, no global LB/CDN
+
+**Limitations Standard Tier:**
+- No global HTTP(S) LB, SSL Proxy, TCP Proxy
+- No Cloud CDN
+- No global anycast IPs
 
 ## VPC Flow Logs
 
@@ -2213,12 +2646,12 @@ Network Connectivity Center (NCC) is a Google Cloud service that provides a cent
 
 - **Centralized connectivity management:** Create and manage complex topologies (hub-and-spoke, mesh, etc.) from a single place.
 - **Hybrid and multi-cloud support:** Integrate on-premises, other clouds, and multiple GCP VPCs.
-- **Spokes:** Attachments to the hub, two types:
-    1) A VPC Network (VPC Spoke)
-    2) Hybrid Spoke
-        - HA  VPN tunnels
-        - VLAN attachments (Interconnect)
-        - Router Appliances (image of a NCC partner or your custom image)
+- **Spokes:** Attachments to the hub, these are logical representations of network resources that connect to the NCC hub. They enable route exchange between the hub and the connected resources.
+    1)  **VPC Spokes:** Connect a VPC network directly to the hub.
+    2)  **Hybrid Spokes:** Connect external networks (on-premises or other clouds) to the hub. These can be:
+        *   **HA VPN Tunnels:** Connect via HA VPN gateways and their tunnels.
+        *   **VLAN Attachments (Cloud Interconnect):** Connect via Dedicated or Partner Interconnect VLAN attachments.
+        *   **Router Appliance Instances:** Connect via custom router VMs (NVAs) deployed in GCP, often from third-party vendors or custom-built.
 - **Visualization:** Provides a graphical view of your network topology and traffic flows.
 
 ## Common Topologies
@@ -2254,13 +2687,52 @@ Network Connectivity Center (NCC) is a Google Cloud service that provides a cent
     - Gated ingress: Controls inbound traffic to the cloud.
     - Gated ingress and egress: Controls inbound and outbound traffic between hybrid and multi-cloud environments.
 
+## Configuring Hybrid Spokes and Router Appliances
+
+Network Connectivity Center enables site-to-site data transfer and connectivity to on-premises or other clouds primarily through **Hybrid Spokes**. These spokes leverage existing connectivity options like Cloud VPN and Cloud Interconnect, or specialized Router Appliance instances.
+
+### 1. Creating Hybrid Spokes (VPN or Interconnect)
+
+-   **Concept:** A hybrid spoke in NCC represents your connection to an external network (on-premises or another cloud) via Cloud VPN or Cloud Interconnect.
+-   **Prerequisites:**
+    *   An existing, functioning HA VPN connection (with its tunnels and BGP sessions via Cloud Router) OR
+    *   An existing, functioning Cloud Interconnect (Dedicated or Partner) with VLAN attachments and associated BGP sessions via Cloud Router.
+-   **Creating the Spoke:**
+    1.  Navigate to Network Connectivity Center in the Google Cloud Console.
+    2.  Select or create an NCC Hub.
+    3.  Add a new spoke, selecting the hybrid spoke type.
+    4.  Choose the VPN tunnels or Interconnect VLAN attachments that will form this spoke.
+    5.  The Cloud Router associated with these VPN/Interconnect resources will manage BGP route exchange with the NCC hub.
+-   **Route Exchange:** Routes learned from the on-premises network via these hybrid spokes are imported into the NCC hub's route table and can be re-advertised to other VPC spokes connected to the same hub (subject to hub routing policies), enabling transitive routing.
+
+### 2. Creating and Using Router Appliance Instances (RAs)
+
+-   **Concept:** A Router Appliance (RA) spoke in NCC uses a Compute Engine VM instance that functions as a BGP speaker to connect an external network (typically on-premises or another cloud via VPN/Interconnect not directly managed by NCC) to the NCC hub.
+    *   This VM runs routing software (e.g., from a third-party vendor available on Google Cloud Marketplace, or a custom routing setup like FRR).
+    *   The RA instance establishes BGP sessions with the NCC hub and with your on-premises router.
+-   **Use Cases for Router Appliances:**
+    *   Integrating third-party SD-WAN solutions with GCP via NCC.
+    *   Custom routing logic or policies that are not natively supported by Cloud Router.
+    *   Connecting networks where direct VPN/Interconnect spoke creation is not suitable.
+    *   Enabling site-to-site data transfer where the RA acts as a gateway and BGP peer for the external site.
+-   **Creating a Router Appliance Spoke:**
+    1.  **Deploy the Router Appliance VM:** Launch a Compute Engine VM and install/configure the necessary routing software. Ensure it has an interface in the VPC network that will connect to the NCC hub.
+    2.  **Configure BGP on the RA VM:** Set up BGP peering from this VM towards the NCC hub (Google provides BGP peering IPs on the hub for RA spokes) and towards your on-premises/external router.
+    3.  **Create the RA Spoke in NCC:**
+        *   In NCC, add a new spoke of type "Router Appliance".
+        *   Specify the VM instance acting as the RA.
+        *   Provide the BGP peering details for connecting the RA to the NCC hub (e.g., link-local IPs, peer ASN for the hub side).
+-   **Site-to-Site Data Transfer:** Once the RA spoke is configured and BGP sessions are up (RA-to-Hub and RA-to-OnPrem), routes are exchanged. The RA instance then forwards traffic between your on-premises network and other networks connected to the NCC hub (like VPC spokes), enabling site-to-site data transfer.
+
+**Data Transfer within NCC:**
+-   Data transfer between VPC spokes connected to the same hub is generally free within the same region, but cross-region costs apply.
+-   Data transfer involving hybrid spokes (VPN, Interconnect, RA) will incur standard egress/ingress costs associated with those underlying products, plus any NCC data processing fees if applicable.
+
 ## Example Use Cases
 
 - Centralizing connectivity between multiple VPCs and on-premises networks.
 - Simplifying management of hybrid and multi-cloud architectures.
 - Enabling transitive routing between VPCs (which is not possible with VPC peering alone).
-
-
 
 ## Reference
 
@@ -2268,32 +2740,260 @@ Network Connectivity Center (NCC) is a Google Cloud service that provides a cent
 
 # Cloud Next Generation Firewall (NGFW)
 
-Cloud Next Generation Firewall (NGFW) packages firewall rules into firewall policies.
+Cloud Next Generation Firewall (NGFW) provides advanced firewall capabilities using **global and regional firewall policies**. These policies group firewall rules for more granular and centralized control. NGFW integrates with Identity and Access Management (IAM) and offers features like secure tags, intrusion prevention (IPS), and FQDN objects.
 
-## Key Features
-- Allow applying policies to VPC networks globally or regionally
-- **Hierarchical firewall policies:** Apply firewall rules at the organization, folder, or project level for consistent security posture.
-- **Global and regional network firewall policies**, global applies to all the regions within the VPC while regional applies to a single specific region
-- **FQDN objects:** Create firewall rules based on fully qualified domain names (e.g., allow egress to `*.github.com`).
-- **Secure tags:** Use organization-level tags for granular microsegmentation (see section above).
-- **Intrusion Prevention Service (IPS):** Detect and block known threats and vulnerabilities at the network level.
-- **Layer 7 (L7) inspection:** Inspect and control traffic based on application-level protocols and content.
-- **Logging and monitoring:** Integrated with Cloud Logging and Security Command Center.
+## Key NGFW Components
 
-## Example Use Cases
+### 1. Firewall Policies
+Containers for firewall rules. They can be of two types:
+    - **Global Network Firewall Policies:** Apply to all regions within a VPC network. Useful for consistent rules across the entire VPC.
+    - **Regional Network Firewall Policies:** Apply to a single specific region within a VPC network. Allow for more granular regional control.
 
-- Allow egress only to specific domains (e.g., `*.googleapis.com`) using FQDN objects.
-- Block known malicious traffic patterns with IPS.
-- Apply organization-wide firewall policies to enforce compliance.
-- Use L7 inspection to block or allow specific application protocols.
+### 2. Firewall Rules
+Define allowed or denied traffic. Each rule within a policy has:
+    - **Priority:** An integer from 0 to 65535. Lower numbers indicate higher priority.
+    - **Action:** `allow`, `deny`, `goto_next` (for hierarchical policies).
+    - **Direction:** `INGRESS` or `EGRESS`.
+    - **Matching Criteria:**
+        - **Sources/Destinations:** IP addresses (CIDR), network tags, service accounts, secure tags, geolocations.
+        - **Protocols and Ports:** TCP, UDP, ICMP, SCTP, ESP, AH, IPIP, and specific ports or ranges.
+        - **FQDN Objects:** Fully qualified domain names to filter traffic to/from specific domains.
+        - **IPS Profiles:** To apply intrusion detection and prevention.
+    - **Logging Enablement:** Can be enabled per rule.
 
-## Migration
+### 3. Hierarchical Firewall Policies
+Allow applying policies at the Organization or Folder level, which are then inherited by underlying projects and VPCs.
+    - Rules from higher-level policies are evaluated before lower-level ones.
+    - `goto_next` allows delegating the decision to lower-level policies.
 
-- You can migrate from legacy VPC firewall rules to NGFW policies for enhanced control and visibility.
+### 4. Intrusion Prevention Service (IPS)
+Inspects traffic for known threats and malware.
+    - Configured via **IPS security profiles** (e.g., `strict`, `balanced`, `relaxed`) that define the severity of threats to block.
+    - Profiles are associated with firewall rules.
 
-## Reference
+### 5. FQDN Objects
+Allow defining rules based on fully qualified domain names (e.g., `*.example.com`). NGFW resolves these names to IP addresses and updates rules dynamically.
 
-- [Cloud NGFW documentation](https://cloud.google.com/firewall/docs/next-generation-firewall-overview)
+## Configuration and Management
+
+### A. Creating Firewall Policies and Rules
+**Global vs. Regional Policies:**
+- **Global policies** are created without specifying a region and are associated with a VPC network. All rules within this policy apply to all regions of that VPC.
+  ```sh
+  gcloud compute security-policies create GLOBAL_POLICY_NAME \
+      --type=GLOBAL_NETWORK
+  ```
+- **Regional policies** are created by specifying a region and are associated with a VPC network. Rules only apply to traffic in that region.
+  ```sh
+  gcloud compute security-policies create REGIONAL_POLICY_NAME \
+      --type=REGIONAL_NETWORK \
+      --region=REGION_NAME
+  ```
+
+**Associating Policies with VPC Networks:**
+Once created, the policy must be associated with one or more VPC networks for its rules to take effect.
+  ```sh
+  gcloud compute security-policies add-association NAME \
+      --network=VPC_NETWORK_NAME \
+      [--security-policy=GLOBAL_POLICY_NAME | --security-policy=REGIONAL_POLICY_NAME --security-policy-region=REGION_NAME]
+  ```
+
+**Creating Rules within a Policy:**
+  ```sh
+  gcloud compute security-policies rules create PRIORITY \
+      --security-policy=POLICY_NAME \
+      --action=allow|deny \
+      --direction=INGRESS|EGRESS \
+      --src-ip-ranges=CIDR_RANGE \
+      --dst-ip-ranges=CIDR_RANGE \
+      --layer4-configs=PROTOCOL:PORT \
+      --description="My firewall rule"
+      [--global-security-policy | --region=REGION_NAME]
+  ```
+
+### B. Mapping Targets: Network Tags, Service Accounts, and Secure Tags
+
+NGFW rules can use different identifiers to specify sources and destinations:
+
+- **Network Tags:** Applied to VM instances. Rules can target `--target-tags` or filter by `--source-tags`. They are project-specific.
+  ```sh
+  gcloud compute security-policies rules create 1000 \
+      --security-policy=MY_POLICY \
+      --action=allow \
+      --direction=INGRESS \
+      --target-tags=web-server \
+      --source-ranges=0.0.0.0/0 \
+      --rules-file=my-rules.yaml # Alternativamente, definir protocolos/puertos en un archivo
+  ```
+- **Service Accounts:** Rules can target VMs running a specific service account (`--target-service-accounts`) or filter by traffic originating by VMs with a service account (`--source-service-accounts`). Useful for microsegmentation based on workload identity.
+  ```sh
+  gcloud compute security-policies rules create 1010 \
+      --security-policy=MY_POLICY \
+      --action=allow \
+      --direction=INGRESS \
+      --target-service-accounts=my-app-sa@project-id.iam.gserviceaccount.com \
+      --source-ranges=10.0.0.0/8
+  ```
+- **Secure Tags:** Tags managed at the Organization or Folder level, providing a centralized and hierarchical way to segment resources. Used with `--source-secure-tags` or `--target-secure-tags`. Require specific IAM permissions for management.
+  ```sh
+  gcloud compute security-policies rules create 1020 \
+      --security-policy=MY_POLICY \
+      --action=allow \
+      --direction=INGRESS \
+      --target-secure-tags=tagValues/123456789012 # ID numérico del TagValue
+  ```
+
+### C. Migrating VPC Firewall Rules to NGFW Firewall Policies
+
+Migration involves recreating the logic of legacy VPC firewall rules within the NGFW policy and rule structure.
+**General Steps:**
+1.  **Analysis:** Review existing VPC firewall rules, identify their purpose, sources, destinations, protocols, ports, and priorities.
+2.  **NGFW Policy Design:** Decide whether to use global, regional, or a combination of policies. Group rules logically into policies.
+3.  **NGFW Policy and Rule Creation:** Create policies and then add corresponding rules, translating VPC rule criteria.
+    - Use equivalent or adjusted priorities.
+    - Map `targetTags` to `--target-tags` or `--target-service-accounts`.
+    - Map `sourceRanges`, `sourceTags`, `sourceServiceAccounts` to their NGFW equivalents.
+4.  **Policy Association:** Associate the new NGFW policies with the relevant VPC networks.
+5.  **Testing:** Verify that traffic flows as expected and NGFW rules are working correctly.
+6.  **Deactivation/Deletion of VPC Rules:** Once validated, legacy VPC firewall rules can be deactivated or deleted. It's recommended to do this gradually.
+**Consideraciones:**
+- NGFW ofrece mayor granularidad y características (FQDN, IPS, Secure Tags).
+- Hierarchical policies can simplify management if applied at the Organization/Folder level.
+
+### D. Configuring Firewall Rule Criteria (Priority, Protocols, etc.)
+
+As mentioned, each NGFW rule is defined with:
+- **`--priority`**: Entero de 0 a 65535. Menor número = mayor precedencia. Las reglas se evalúan en orden de prioridad.
+- **`--action`**: `allow` o `deny`. Para políticas jerárquicas también `goto_next` o `apply_security_profile_group` (para IPS).
+- **`--direction`**: `INGRESS` o `EGRESS`.
+- **`--layer4-configs`**: Especifica protocolos (tcp, udp, sctp, icmp, esp, ah, ipip) y opcionalmente puertos. Ejemplo: `tcp:80,tcp:443,udp:53`.
+- **`--source-ip-ranges` / `--destination-ip-ranges`**: CIDRs de origen/destino.
+- **`--disabled`**: Para deshabilitar una regla temporalmente sin borrarla.
+- **`--description`**: Texto descriptivo.
+
+### E. Configuring Firewall Rules Logging for NGFW
+
+El logging se puede habilitar a nivel de regla individual dentro de una política NGFW.
+  ```sh
+  gcloud compute security-policies rules update RULE_PRIORITY \
+      --security-policy=POLICY_NAME \
+      --enable-logging \
+      [--global-security-policy | --region=REGION_NAME]
+  ```
+- Los logs se envían a Cloud Logging y contienen detalles sobre las conexiones que coinciden con la regla (IPs, puertos, protocolo, acción tomada, etc.).
+- Es útil para auditoría, troubleshooting y para alimentar Firewall Insights.
+- Considerar el impacto en el volumen de logs y costos asociados. Se recomienda habilitar logging en reglas importantes o durante periodos de diagnóstico.
+
+### F. Configuring Hierarchical Firewall Policies
+
+Las políticas jerárquicas permiten definir una postura de seguridad base a nivel de Organización o Carpeta.
+1.  **Crear la Política Jerárquica:**
+    ```sh
+    gcloud compute firewall-policies create HIERARCHICAL_POLICY_NAME \
+        --organization=ORGANIZATION_ID  # o --folder=FOLDER_ID
+        --description="Base security policy for org"
+    ```
+2.  **Añadir Reglas a la Política Jerárquica:** Similar a las políticas de red, pero se aplican a la organización/carpeta.
+    ```sh
+    gcloud compute firewall-policies rules create 100 \
+        --firewall-policy=HIERARCHICAL_POLICY_NAME \
+        --action=deny \
+        --src-ip-ranges=0.0.0.0/0 \
+        --all-ip-protocols \
+        --description="Default deny all ingress"
+    ```
+3.  **Asociar la Política a la Organización/Carpeta:**
+    ```sh
+    gcloud compute firewall-policies add-association HIERARCHICAL_POLICY_NAME \
+        --organization=ORGANIZATION_ID # o --folder=FOLDER_ID
+        --name=org-association-name
+    ```
+**Evaluación:**
+- Las políticas de la Organización se evalúan primero.
+- Luego las políticas de Carpeta (si existen).
+- Luego las políticas de Red VPC (Globales y Regionales).
+- Finalmente, las reglas de firewall VPC heredadas (si aún existen y no hay políticas NGFW asociadas a la VPC).
+- La acción `goto_next` en una regla de política jerárquica pasa la evaluación al siguiente nivel en la jerarquía.
+
+### G. Configuración del Intrusion Prevention Service (IPS)
+
+IPS ayuda a detectar y prevenir amenazas explotando vulnerabilidades.
+1.  **Crear un Grupo de Perfiles de Seguridad (Security Profile Group) para IPS:**
+    ```sh
+    gcloud network-security security-profile-groups create MY_IPS_PROFILE_GROUP \
+        --organization=ORGANIZATION_ID \ # o --project=PROJECT_ID si es a nivel de proyecto
+        --description="IPS Profile Group"
+    ```
+2.  **Añadir un Perfil de Seguridad de tipo `threat-prevention` al grupo:**
+    Este perfil define las severidades de amenazas que se bloquearán (CRITICAL, HIGH, MEDIUM, LOW, INFORMATIONAL).
+    ```sh
+    gcloud network-security security-profiles create MY_THREAT_PREVENTION_PROFILE \
+        --type=THREAT_PREVENTION \
+        --security-profile-group=MY_IPS_PROFILE_GROUP \
+        --organization=ORGANIZATION_ID \ # o --project=PROJECT_ID
+        --description="Block critical and high severity threats" \
+        --override-critical-severity-action=DENY \
+        --override-high-severity-action=DENY \
+        --override-medium-severity-action=ALERT \
+        --override-low-severity-action=ALERT \
+        --default-action=ALLOW # Acción para severidades no especificadas
+    ```
+3.  **Asociar el Grupo de Perfiles de Seguridad a una Regla de Firewall NGFW:**
+    Se usa la acción `apply_security_profile_group`.
+    ```sh
+    gcloud compute security-policies rules create 500 \
+        --security-policy=MY_VPC_POLICY \
+        --action=apply_security_profile_group \
+        --security-profile-group=organizations/ORGANIZATION_ID/locations/global/securityProfileGroups/MY_IPS_PROFILE_GROUP \ # O la ruta del proyecto
+        --src-ip-ranges=0.0.0.0/0 \
+        --direction=INGRESS \
+        --layer4-configs=all \
+        --description="Apply IPS to all ingress traffic"
+        [--global-security-policy | --region=REGION_NAME]
+    ```
+- IPS requiere que el tráfico pase por el firewall para inspección.
+- Las firmas de amenazas son actualizadas por Google.
+
+### H. Implementación de Objetos de Firewall FQDN
+
+Los objetos FQDN permiten crear reglas basadas en nombres de dominio.
+1.  **Usar FQDN en una Regla de Firewall:**
+    Se usa `--source-fqdns` o `--destination-fqdns` directamente en la creación o actualización de la regla. No se crea un "objeto FQDN" por separado primero.
+    ```sh
+    gcloud compute security-policies rules create 2000 \
+        --security-policy=MY_VPC_POLICY \
+        --action=allow \
+        --direction=EGRESS \
+        --destination-fqdns=*.googleapis.com,*.github.com \
+        --layer4-configs=tcp:443 \
+        --description="Allow egress to critical services via FQDN"
+        [--global-security-policy | --region=REGION_NAME]
+    ```
+**Consideraciones FQDN:**
+- NGFW resuelve los FQDNs a IPs y actualiza las reglas internamente.
+- Soporta wildcards (e.g., `*.example.com`).
+- Útil para permitir acceso a servicios SaaS cuyas IPs pueden cambiar.
+- Aplica a tráfico HTTP, HTTPS, TLS y SSL.
+
+## Comparación: Reglas de Firewall VPC (Heredadas) vs. Políticas de Firewall NGFW
+
+| Característica         | Reglas de Firewall VPC (Heredadas) | Políticas de Firewall NGFW                      |
+|------------------------|------------------------------------|-------------------------------------------------|
+| **Alcance**            | Red VPC (Global)                   | Red VPC (Global o Regional), Org, Carpeta       |
+| **Gestión**            | Individual por regla               | Agrupadas en Políticas                          |
+| **Jerarquía**          | No explícita (solo prioridad)      | Sí (Org/Carpeta/VPC)                            |
+| **Secure Tags**        | No Soportado                       | Soportado                                       |
+| **FQDN Objects**       | No Soportado                       | Soportado                                       |
+| **IPS**                | No Soportado                       | Soportado                                       |
+| **Logging**            | Por regla                          | Por regla                                       |
+| **Acción `goto_next`** | No                                 | Sí (para políticas jerárquicas)                 |
+| **Complejidad**        | Más simple para redes pequeñas     | Más potente y escalable para redes complejas    |
+
+## Referencias
+- [Cloud Next Generation Firewall overview](https://cloud.google.com/firewall/docs/next-generation-firewall-overview)
+- [Hierarchical firewall policies](https://cloud.google.com/vpc/docs/firewall-policies)
+- [Intrusion prevention service](https://cloud.google.com/firewall/docs/using-intrusion-prevention-service)
+- [FQDN objects](https://cloud.google.com/firewall/docs/fqdn-objects)
 
 ## Advanced Cloud Armor Features
 
@@ -2323,8 +3023,994 @@ Cloud Armor provides advanced security features to protect your applications fro
 - [Cloud Armor documentation](https://cloud.google.com/armor/docs)
 - [Cloud Armor WAF rules](https://cloud.google.com/armor/docs/waf-rules)
 - [Adaptive Protection](https://cloud.google.com/armor/docs/adaptive-protection-overview)
+
 # References
 
 [Partner Advantage Portal](https://partner.cloudskillsboost.google/course_sessions/2386512/documents/374298)
 
 [A Cloud Guru - Professional Cloud Network Engineer](https://learn.acloud.guru/course/gcp-certified-professional-cloud-network-engineer/)
+
+# GKE Load Balancer Configuration (Deep Dive)
+
+GKE provides several mechanisms to expose services externally or internally, each with different capabilities, integration levels, and recommended use cases. The main options are: **Gateway API (GKE Gateway Controller)**, **Ingress**, **LoadBalancer Services**, and **Network Endpoint Groups (NEGs)**.
+
+---
+
+## 1. Gateway API (GKE Gateway Controller)
+
+**What is it?**  
+The Gateway API is a Kubernetes standard for service networking, designed to be more expressive, extensible, and role-oriented than Ingress. GKE implements this via the GKE Gateway controller, which configures Google Cloud Application Load Balancers (L7) for HTTP(S) and (optionally) TCP/UDP traffic.
+
+**Key features:**
+- **Multi-cluster support:** A single Gateway can be shared across multiple GKE clusters, enabling cross-cluster traffic management and high availability ([docs](https://cloud.google.com/kubernetes-engine/docs/concepts/gateway-api)).
+- **Multi-namespace delegation:** Gateways can be managed by cluster operators, while application teams manage their own routes (separation of concerns).
+- **Advanced traffic management:** Supports HTTP routing, header-based routing, traffic splitting, and more.
+- **Multi-protocol:** Supports HTTP, HTTPS, TCP, and UDP listeners.
+- **Centralized security:** TLS configuration, authentication, and policy enforcement at the Gateway level.
+- **Integration with Google Cloud Load Balancing:** Automatically provisions and manages global/regional L7 load balancers.
+- **Recommended for:** New deployments, multi-cluster/multi-tenant environments, advanced routing/security needs.
+
+**Limitations:**
+- Still evolving; not all features of Ingress are available yet.
+- Requires enabling the Gateway API and using supported GatewayClasses (e.g., `gke-l7-global-external-managed`).
+
+**Example:**
+```yaml
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: Gateway
+metadata:
+  name: my-gateway
+spec:
+  gatewayClassName: gke-l7-global-external-managed
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: HTTPRoute
+metadata:
+  name: my-route
+spec:
+  parentRefs:
+    - name: my-gateway
+  rules:
+    - backendRefs:
+        - name: my-service
+          port: 80
+```
+**References:**  
+- [Gateway API overview](https://cloud.google.com/kubernetes-engine/docs/concepts/gateway-api)
+
+---
+
+## 2. Ingress
+
+**What is it?**  
+Ingress is the original Kubernetes API for HTTP(S) traffic routing. GKE provides a managed Ingress controller that creates and manages Google Cloud HTTP(S) Load Balancers.
+
+**Key features:**
+- **Single-cluster only:** An Ingress resource is always scoped to a single cluster. It cannot be shared across clusters ([docs](https://cloud.google.com/kubernetes-engine/docs/concepts/ingress)).
+- **HTTP/HTTPS only:** Ingress only supports L7 (HTTP/HTTPS) traffic.
+- **Automatic provisioning:** When you create an Ingress, GKE automatically provisions a global (external) or regional (internal) HTTP(S) Load Balancer.
+- **Path and host-based routing:** Supports routing based on URL paths and hostnames.
+- **TLS termination:** Supports Google-managed or custom SSL certificates.
+- **BackendConfig and FrontendConfig:** GKE-specific CRDs to configure advanced LB features (e.g., Cloud Armor, CDN, IAP, etc.).
+- **Types of Ingress:**
+  - **External (XLB):** Global, internet-facing ([docs](https://cloud.google.com/kubernetes-engine/docs/concepts/ingress-xlb))
+  - **Internal (ILB):** Regional, VPC-internal only ([docs](https://cloud.google.com/kubernetes-engine/docs/concepts/ingress-ilb))
+
+**Limitations:**
+- No multi-cluster support (use Multi-Cluster Ingress or Gateway API for that).
+- Only HTTP/HTTPS (no TCP/UDP).
+- Some advanced features require GKE-specific annotations or CRDs.
+
+**References:**  
+- [Ingress overview](https://cloud.google.com/kubernetes-engine/docs/concepts/ingress)
+- [External Ingress (XLB)](https://cloud.google.com/kubernetes-engine/docs/concepts/ingress-xlb)
+- [Internal Ingress (ILB)](https://cloud.google.com/kubernetes-engine/docs/concepts/ingress-ilb)
+
+---
+
+## 3. LoadBalancer Services
+
+**What is it?**  
+A Kubernetes Service of type `LoadBalancer` provisions a Layer 4 (TCP/UDP) Network Load Balancer (NLB) in Google Cloud.
+
+**Key features:**
+- **L4 (TCP/UDP) support:** Exposes any TCP/UDP service externally or internally.
+- **Passthrough mode:** The load balancer does not terminate connections; it forwards traffic directly to backend Pods/VMs.
+- **Weighted load balancing:** Optionally, traffic can be distributed based on the number of serving Pods per node.
+- **Internal or external:** Can be used for both internet-facing and VPC-internal services.
+- **No HTTP routing:** No path/host-based routing, no SSL termination at the LB.
+
+**Limitations:**
+- No L7 features (use Ingress or Gateway for HTTP/HTTPS).
+- No multi-cluster support (use Multi-Cluster Service for that).
+
+**References:**  
+- [About load balancing in GKE](https://cloud.google.com/kubernetes-engine/docs/concepts/about-load-balancing)
+
+---
+
+## 4. Network Endpoint Groups (NEG) & Container-native Load Balancing
+
+**What is it?**  
+A NEG is a Google Cloud resource representing a group of network endpoints (e.g., Pods, VMs, FQDNs). In GKE, NEGs enable **container-native load balancing**: traffic is sent directly to Pod IPs, not just node IPs.
+
+**Key features:**
+- **Pod-level load balancing:** Improves performance, health checks, and observability ([docs](https://cloud.google.com/kubernetes-engine/docs/concepts/container-native-load-balancing)).
+- **Required for advanced L7 features:** All GKE-managed L7 load balancers (Ingress, Gateway) use NEGs under the hood.
+- **Types of NEGs:**
+  - **Zonal NEGs:** For GKE Pods in a specific zone.
+  - **Serverless NEGs:** For Cloud Run, Functions, App Engine.
+  - **Hybrid NEGs:** For endpoints outside GCP.
+- **Standalone NEGs:** You can manually create NEGs and configure your own load balancer, for advanced use cases.
+
+**How to enable:**  
+Add the annotation to your Service:
+```yaml
+cloud.google.com/neg: '{"exposed_ports": {"80":{}}}'
+```
+
+**References:**  
+- [Container-native load balancing](https://cloud.google.com/kubernetes-engine/docs/concepts/container-native-load-balancing)
+
+---
+
+## Comparative Table
+
+| Feature/Capability         | Gateway API (GKE Gateway) | Ingress                | LoadBalancer Service | NEGs / Container-native LB |
+|---------------------------|---------------------------|------------------------|---------------------|----------------------------|
+| **Multi-cluster**         | Yes                       | No                     | No                  | Yes (with Multi-cluster)   |
+| **Multi-namespace**       | Yes (delegation)          | No                     | No                  | N/A                        |
+| **Protocols**             | HTTP, HTTPS, TCP, UDP     | HTTP, HTTPS            | TCP, UDP            | All                        |
+| **L7 Routing**            | Yes (advanced)            | Yes (basic)            | No                  | N/A                        |
+| **L4 Routing**            | Yes                       | No                     | Yes                 | N/A                        |
+| **TLS Termination**       | Yes                       | Yes                    | No                  | N/A                        |
+| **Traffic splitting**     | Yes                       | No                     | No                  | N/A                        |
+| **Cloud Armor, CDN, IAP** | Yes                       | Yes (via CRDs)         | No                  | N/A                        |
+| **Pod-level LB**          | Yes                       | Yes                    | No (unless NEGs)    | Yes                        |
+| **Internal/External**     | Both                      | Both                   | Both                | Both                       |
+| **Recommended for**       | New, multi-cluster, L7/L4 | Simpler HTTP/HTTPS     | Simple TCP/UDP      | Advanced, hybrid, serverless|
+
+---
+
+## Key Takeaways
+
+- **Gateway API** is the most flexible and future-proof, supporting multi-cluster, multi-namespace, and advanced L7/L4 routing. Use it for new projects or when you need advanced traffic management and security.
+- **Ingress** is simpler, single-cluster, and HTTP/HTTPS only. Good for legacy or simple web apps.
+- **LoadBalancer Service** is for exposing TCP/UDP services at L4, with no HTTP routing or SSL termination.
+- **NEGs** enable direct Pod-level load balancing and are used by all GKE L7 load balancers. You can also use them for hybrid or serverless backends.
+
+---
+
+**References consultadas:**
+- [About load balancing in GKE](https://cloud.google.com/kubernetes-engine/docs/concepts/about-load-balancing)
+- [Gateway API in GKE](https://cloud.google.com/kubernetes-engine/docs/concepts/gateway-api)
+- [Ingress in GKE](https://cloud.google.com/kubernetes-engine/docs/concepts/ingress)
+- [External Ingress (XLB)](https://cloud.google.com/kubernetes-engine/docs/concepts/ingress-xlb)
+- [Internal Ingress (ILB)](https://cloud.google.com/kubernetes-engine/docs/concepts/ingress-ilb)
+- [Container-native load balancing](https://cloud.google.com/kubernetes-engine/docs/concepts/container-native-load-balancing)
+
+# Choosing between GKE Autopilot Mode and Standard Mode
+
+Google Kubernetes Engine (GKE) offers two operation modes: **Autopilot** and **Standard**. Each mode is designed for different operational needs and levels of control.
+
+## GKE Autopilot Mode
+
+**What is it?**
+- A fully managed Kubernetes experience where Google manages the entire cluster infrastructure, including nodes, scaling, security, and maintenance.
+- You only pay for the resources (CPU, memory, storage) requested by your Pods, not for the underlying nodes.
+
+**Key Features:**
+- **No node management:** Google provisions and manages nodes automatically.
+- **Pod-level billing:** Pay only for the resources your workloads actually request.
+- **Security by default:** Nodes are locked down, with minimal permissions and hardened configurations.
+- **Automatic scaling:** Cluster and node pool scaling is handled by Google.
+- **Best for:** Teams who want to focus on deploying workloads without managing infrastructure.
+
+**Limitations:**
+- Less flexibility for custom node configurations (e.g., custom images, privileged DaemonSets, GPU/TPU support is limited).
+- Some advanced Kubernetes features (like node-level customizations, SSH access to nodes) are not available.
+- Fewer options for network and storage customization.
+
+**Networking implications:**
+- Limited network customization options
+- No custom CNI plugins
+- Dataplane V2 enabled by default
+- Restricted privileged networking workloads
+- Google manages IP allocation automatically
+
+## GKE Standard Mode
+
+**What is it?**
+- A more traditional Kubernetes experience where you manage the cluster nodes, node pools, and have full control over the infrastructure.
+- You pay for the Compute Engine VMs (nodes) that make up your cluster, regardless of Pod usage.
+
+**Key Features:**
+- **Full node control:** Customize node pools, machine types, disk types, and node-level settings.
+- **Access to all Kubernetes features:** Including privileged workloads, custom networking, GPUs/TPUs, and more.
+- **SSH access:** You can SSH into nodes for troubleshooting or custom configuration.
+- **Best for:** Teams needing advanced configurations, custom integrations, or running workloads that require privileged access.
+
+**Limitations:**
+- You are responsible for node management, upgrades, scaling, and security hardening.
+- Potential for over-provisioning and higher costs if nodes are underutilized.
+
+**Networking implications:**
+- Full network customization available
+- Support for custom CNI plugins
+- Choice of dataplane (V1 or V2)
+- Support for privileged networking workloads
+- Manual control over Pod IP ranges and sizing
+
+## Comparison Table
+
+| Feature/Aspect         | Autopilot Mode                        | Standard Mode                      |
+|-----------------------|---------------------------------------|------------------------------------|
+| Node management       | Fully managed by Google               | User-managed                       |
+| Billing model         | Per-Pod resource requests             | Per-node (VM)                      |
+| Custom node config    | Limited                               | Full                               |
+| SSH to nodes          | Not available                         | Available                          |
+| Privileged workloads  | Not supported                         | Supported                          |
+| GPU/TPU support       | Limited                               | Full                               |
+| Network/storage opts  | Limited                               | Full                               |
+| Security hardening    | By default                            | User responsibility                |
+| Use case              | Simplicity, no infra ops              | Advanced, custom, infra control    |
+
+## When to choose each mode?
+
+- **Choose Autopilot if:**
+  - You want a hands-off, serverless Kubernetes experience.
+  - You prefer to focus on applications, not infrastructure.
+  - Your workloads fit within the supported features and limitations.
+
+- **Choose Standard if:**
+  - You need full control over nodes, networking, or storage.
+  - You require advanced features, custom integrations, or privileged workloads.
+  - You have specific compliance or operational requirements.
+
+**References:**
+- [GKE Autopilot overview](https://cloud.google.com/kubernetes-engine/docs/concepts/autopilot-overview)
+- [GKE Standard vs Autopilot comparison](https://cloud.google.com/kubernetes-engine/docs/concepts/types-of-clusters)
+
+# Enabling GKE Dataplane V2
+
+**What is GKE Dataplane V2?**
+- GKE Dataplane V2 is an advanced dataplane architecture for Google Kubernetes Engine that leverages eBPF (extended Berkeley Packet Filter) for high-performance, secure, and observable networking.
+- It replaces the legacy IPTables-based dataplane with a more modern, efficient, and extensible approach.
+- Dataplane V2 is available for both Autopilot and Standard clusters (with some limitations).
+
+**Key Benefits:**
+- **Improved network performance:** Lower latency and higher throughput for pod-to-pod and pod-to-service traffic.
+- **Enhanced security:** Native support for Kubernetes Network Policies with better enforcement and scalability.
+- **Advanced observability:** Enables features like GKE Dataplane V2 observability, providing deep visibility into network flows and troubleshooting.
+- **Simplified operations:** Reduces complexity by removing the need for kube-proxy and legacy IPTables rules.
+
+**How to enable Dataplane V2:**
+- You can enable Dataplane V2 when creating a new GKE cluster by specifying the `--enable-dataplane-v2` flag (CLI) or by selecting the option in the Google Cloud Console.
+- Example (CLI):
+```sh
+gcloud container clusters create CLUSTER_NAME \
+  --enable-dataplane-v2 \
+  --region=REGION \
+  [other options]
+```
+- Once enabled, Dataplane V2 cannot be disabled for the cluster.
+- For Autopilot clusters, Dataplane V2 is enabled by default and cannot be disabled.
+
+**Considerations:**
+- Some advanced networking features or third-party CNI plugins may not be compatible with Dataplane V2.
+- Not all legacy clusters can be upgraded in-place; you may need to create a new cluster to use Dataplane V2.
+- Review the [official documentation](https://cloud.google.com/kubernetes-engine/docs/concepts/dataplane-v2) for the latest compatibility and feature support.
+
+**References:**
+- [GKE Dataplane V2 overview](https://cloud.google.com/kubernetes-engine/docs/concepts/dataplane-v2)
+- [Enable Dataplane V2](https://cloud.google.com/kubernetes-engine/docs/how-to/dataplane-v2)
+
+# Adding Additional Pod Ranges to an Existing GKE Cluster
+
+As your GKE cluster grows, you may need to schedule more Pods than your initial Pod IP range allows. GKE supports adding **additional Pod IP ranges** (also known as secondary ranges) to VPC-native clusters, enabling you to scale beyond the original Pod CIDR.
+
+## When do you need additional Pod ranges?
+- When the initial secondary IP range for Pods is exhausted (e.g., you need to add more nodes or increase the number of Pods per node).
+- When you want to create new node pools with a different Pod range (for isolation or scaling purposes).
+
+## Requirements
+- Your cluster must be **VPC-native** (using Alias IPs).
+- The subnet must have one or more unused secondary IP ranges available.
+- You must have the necessary IAM permissions to update the cluster and subnet.
+
+## How to add an additional Pod range
+1. **Create a new secondary IP range in your subnet** (if you don't have one available):
+   ```sh
+   gcloud compute networks subnets update SUBNET_NAME \
+     --add-secondary-ranges NEW_RANGE_NAME=NEW_RANGE_CIDR \
+     --region=REGION
+   ```
+2. **Update the GKE cluster to add the new Pod range:**
+   ```sh
+   gcloud container clusters update CLUSTER_NAME \
+     --region=REGION \
+     --additional-pod-ip-range=NEW_RANGE_NAME
+   ```
+   - You can repeat this step to add multiple additional Pod ranges.
+
+3. **Create a new node pool using the new Pod range:**
+   ```sh
+   gcloud container node-pools create NODE_POOL_NAME \
+     --cluster=CLUSTER_NAME \
+     --region=REGION \
+     --pod-ipv4-range=NEW_RANGE_NAME \
+     [other options]
+   ```
+   - The new node pool will allocate Pod IPs from the new range.
+
+## Considerations
+- Existing node pools will continue to use their original Pod range unless explicitly updated.
+- You cannot remove a Pod range if any node pool is still using it.
+- Service ranges (for ClusterIP Services) are managed separately and cannot be expanded after cluster creation.
+- Plan your IP ranges to avoid overlap and ensure enough space for future scaling.
+
+**References:**
+- [Add Pod IP ranges to a cluster](https://cloud.google.com/kubernetes-engine/docs/how-to/alias-ips#add_pod_ip_range)
+- [VPC-native clusters and Alias IPs](https://cloud.google.com/kubernetes-engine/docs/concepts/alias-ips)
+
+## Configuring Cloud Service Mesh (Anthos Service Mesh)
+
+Cloud Service Mesh (Anthos Service Mesh) is a fully managed service mesh based on Istio, providing advanced traffic management, security, and observability for microservices running on GKE.
+
+**Key points:**
+- Enables mTLS (mutual TLS), traffic encryption, and service-to-service authentication.
+- Provides traffic control features: traffic splitting, retries, circuit breaking, etc.
+- Deep observability: telemetry, tracing, and monitoring for all service-to-service calls.
+- Can be enabled on GKE clusters via the Google Cloud Console, gcloud, or config files.
+- Requires cluster registration and sometimes specific network or firewall settings.
+
+**References:**
+- [Anthos Service Mesh overview](https://cloud.google.com/service-mesh/docs/overview)
+- [Install Anthos Service Mesh on GKE](https://cloud.google.com/service-mesh/docs/gke-install)
+
+---
+
+## Configuring Source NAT (SNAT) and IP Masquerade Policies in GKE
+
+By default, GKE uses IP masquerading (SNAT) for outbound traffic from Pods to destinations outside the cluster, translating Pod IPs to the node's IP. You can customize this behavior using IP Masquerade Agent policies.
+
+**Key points:**
+- **Default:** All egress traffic from Pods to outside the cluster is SNATed to the node IP.
+- **Custom policies:** You can configure exceptions so that traffic to certain destinations (e.g., internal VPC ranges) preserves the Pod IP.
+- **Use cases:** Required for hybrid networking, on-premises integration, or when you want to see the original Pod IP at the destination.
+- **How to configure:**
+  - Deploy the [IP Masquerade Agent](https://cloud.google.com/kubernetes-engine/docs/how-to/ip-masquerade-agent) with a custom ConfigMap specifying which IP ranges should not be masqueraded.
+  - Example: Exclude RFC1918 ranges to preserve Pod IPs for internal traffic.
+
+**References:**
+- [Configure IP masquerading in GKE](https://cloud.google.com/kubernetes-engine/docs/how-to/ip-masquerade-agent)
+- [GKE networking SNAT](https://cloud.google.com/kubernetes-engine/docs/concepts/network-overview#ip-masquerading)
+
+# Disaster Recovery (DR) Patterns for GCP Networking
+
+## DR Design Principles
+- **Recovery Time Objective (RTO):** Maximum acceptable downtime
+- **Recovery Point Objective (RPO):** Maximum acceptable data loss
+- **Multi-region deployment:** Essential for true DR capability
+- **Automated failover:** Reduces RTO through automation
+- **Regular testing:** DR plans must be tested regularly
+
+## Network DR Strategies
+
+### 1. Multi-Region VPC Design
+- **Global VPC:** Single VPC spanning multiple regions
+- **Regional subnets:** Distribute workloads across regions
+- **Cross-region connectivity:** Ensure internal communication paths
+- **Consistent IP addressing:** Plan IP ranges to avoid conflicts
+
+### 2. Load Balancer DR Patterns
+- **Global HTTP(S) LB:** Automatic failover between regions
+- **Health checks:** Detect regional failures automatically
+- **Traffic distribution:** Configure primary/secondary region ratios
+- **DNS failover:** Use Cloud DNS with health checks for additional layer
+
+### 3. Hybrid Connectivity DR
+- **Redundant connections:** Multiple VPN tunnels or Interconnect attachments
+- **Cross-region Cloud Routers:** BGP route advertisement across regions
+- **On-premises redundancy:** Multiple paths to different GCP regions
+- **Route priorities:** Configure primary/backup routing paths
+
+### 4. DNS DR Configuration
+- **Multi-region DNS:** Configure DNS records for multiple regions
+- **Health check integration:** Automatic DNS failover based on health
+- **TTL considerations:** Lower TTL for faster failover (trade-off with caching)
+- **Geolocation routing:** Route users to nearest healthy region
+
+## DR Implementation Patterns
+
+### Active-Passive
+- **Primary region:** Handles all traffic
+- **Secondary region:** Standby, activated during failure
+- **Lower cost:** Resources in secondary region can be minimal
+- **Higher RTO:** Time needed to scale up secondary region
+
+### Active-Active
+- **Both regions active:** Traffic distributed across regions
+- **Lower RTO:** Immediate failover capability
+- **Higher cost:** Full resources in both regions
+- **Data consistency:** More complex to maintain
+
+### Pilot Light
+- **Minimal secondary:** Core components running in secondary region
+- **Quick scale-up:** Ability to rapidly scale during DR event
+- **Balanced approach:** Between cost and RTO
+
+## Network Configuration Backup
+- **Terraform/IaC:** Infrastructure as Code for reproducible deployments
+- **Configuration exports:** Regular exports of firewall rules, routes, etc.
+- **Automated deployment:** Scripts for rapid environment recreation
+- **Version control:** Track changes to network configurations
+
+## Testing and Validation
+- **Regular DR drills:** Test failover procedures quarterly
+- **Chaos engineering:** Intentionally cause failures to test resilience
+- **Monitoring and alerting:** Ensure DR systems are monitored
+- **Documentation:** Keep runbooks updated and accessible
+
+# Configuring Authorized Networks for GKE Control Plane
+
+**Authorized networks** restrict access to the GKE control plane (API server) to specific IP ranges, enhancing security for private and public clusters.
+
+## Configuration
+- **Console:** Cluster → Security → Authorized networks
+- **CLI:** `--enable-master-authorized-networks --master-authorized-networks CIDR_RANGE`
+
+## Use cases
+- **Private clusters:** Allow access from on-premises networks via VPN/Interconnect
+- **Public clusters:** Restrict API access to corporate networks only
+- **Hybrid environments:** Enable access from multiple network segments
+
+## Best practices
+- Use specific CIDR ranges, avoid 0.0.0.0/0
+- Include Cloud Shell ranges if needed: 35.235.240.0/20
+- Plan for NAT gateway IPs in hybrid scenarios
+- Consider VPN/Interconnect IP ranges for on-premises access
+
+**Example:**
+```sh
+gcloud container clusters update CLUSTER_NAME \
+  --enable-master-authorized-networks \
+  --master-authorized-networks 10.0.0.0/8,172.16.0.0/12
+```
+
+# Advanced Cloud Service Mesh Configuration
+
+## Installation Methods
+1. **Managed ASM:** Google-managed control plane
+2. **In-cluster ASM:** Self-managed Istio installation
+3. **Fleet registration:** Multi-cluster service mesh
+
+## Key Configuration Areas
+
+### mTLS Configuration
+- **Automatic mTLS:** Enabled by default for service-to-service communication
+- **Permissive mode:** Allows both mTLS and plain text during migration
+- **Strict mode:** Enforces mTLS for all communications
+
+### Traffic Management
+- **Virtual Services:** Define routing rules and traffic splitting
+- **Destination Rules:** Configure load balancing and circuit breakers
+- **Gateways:** Manage ingress and egress traffic
+
+### Security Policies
+- **Authorization policies:** Control service-to-service access
+- **Request authentication:** JWT validation and RBAC
+- **Peer authentication:** mTLS policy enforcement
+
+## Configuration Example
+```yaml
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: frontend-policy
+spec:
+  selector:
+    matchLabels:
+      app: frontend
+  rules:
+  - from:
+    - source:
+        principals: ["cluster.local/ns/default/sa/backend"]
+```
+
+# Advanced SNAT and IP Masquerade Configuration
+
+## IP Masquerade Agent Configuration
+
+### Default Behavior
+- All egress traffic from Pods is SNATed to node IP
+- Traffic to cluster CIDR and service CIDR is not masqueraded
+- Google APIs traffic uses Private Google Access
+
+### Custom Configuration
+Deploy IP Masquerade Agent with custom ConfigMap:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ip-masq-agent
+  namespace: kube-system
+data:
+  config: |
+    nonMasqueradeCIDRs:
+      - 10.0.0.0/8      # Don't masquerade internal traffic
+      - 172.16.0.0/12   # Don't masquerade to on-premises
+    masqLinkLocal: false
+    resyncInterval: 60s
+```
+
+### Use Cases
+- **Hybrid networking:** Preserve Pod IPs for on-premises communication
+- **Service mesh:** Enable proper source IP identification
+- **Compliance:** Meet requirements for source IP tracking
+- **Debugging:** Maintain visibility of original Pod IPs
+
+### Configuration Steps
+1. Create ConfigMap with desired CIDR ranges
+2. Deploy IP Masquerade Agent DaemonSet
+3. Verify configuration with network testing
+4. Monitor traffic flows and adjust as needed
+
+**References:**
+- [IP Masquerade Agent](https://cloud.google.com/kubernetes-engine/docs/how-to/ip-masquerade-agent)
+- [GKE networking overview](https://cloud.google.com/kubernetes-engine/docs/concepts/network-overview)
+
+## Network Packet Inspection
+
+This section covers methods for inspecting network traffic within Google Cloud, often for security purposes using third-party appliances or native services.
+
+### 1. Routing and Inspecting Inter-VPC Traffic with Multi-NIC NVAs
+
+-   **Concept:** Network Virtual Appliances (NVAs), such as third-party firewalls, IDS/IPS, or routers, can be deployed as Compute Engine VMs with multiple network interface controllers (NICs).
+-   **Multi-NIC for Inter-VPC Routing:** Each NIC on the NVA is attached to a different VPC network. The NVA can then route and inspect traffic flowing between these VPCs.
+    *   Requires IP forwarding to be enabled on the NVA's NICs (`canIpForward=true`).
+    *   Custom static routes in each VPC are configured to direct relevant traffic through the NVA.
+    *   (See details in sections: `#Network Virtual Appliances (NVA)` and `#Multiple network interfaces` - particularly caveat 5 regarding multi-NIC VMs as gateways).
+-   **Use Cases:** Enforcing security policies between VPCs, traffic scrubbing, centralized egress/ingress inspection.
+-   **Deployment Patterns:** Common patterns include inline inspection (all traffic passes through) or hub-and-spoke where the NVA resides in a central hub VPC.
+
+### 2. Internal Load Balancer as Next Hop for Highly Available Multi-NIC NVA Routing
+
+-   **Challenge with NVAs:** A single NVA VM is a single point of failure.
+-   **Solution:** Deploy a group of identical NVA VMs (e.g., in a Managed Instance Group - MIG) and place an **Internal Passthrough Network Load Balancer** in front of them.
+-   **ILB as Next Hop:**
+    *   The Internal Passthrough Network Load Balancer itself can be configured as the next hop for a custom static route.
+    *   The load balancer distributes traffic across the healthy NVA instances in the backend MIG.
+    *   Health checks configured on the ILB ensure traffic is only sent to healthy NVA instances, providing high availability for the inspection function.
+    *   (See details in section: `#Internal LB` - `### Specifying the next hop`, and `#Custom static routes` regarding ILB forwarding rule as next hop).
+-   **Benefits:** Achieves high availability and scalability for your NVA-based inspection an_NAVd routing solution.
+
+### 3. Enabling Layer 7 Packet Inspection in Cloud NGFW
+
+-   **Cloud Next Generation Firewall (NGFW)** provides native capabilities for deep packet inspection, including Layer 7.
+-   **Intrusion Prevention Service (IPS):** This is the core feature within Cloud NGFW for L7 inspection.
+    *   IPS uses threat intelligence (signatures maintained by Google) to detect and prevent malware, spyware, command-and-control attacks, and other exploits within traffic flows.
+    *   It's configured by creating **Security Profile Groups** with **Threat Prevention profiles** that define severities (CRITICAL, HIGH, MEDIUM, LOW, INFORMATIONAL) and actions (DENY, ALERT).
+    *   These profiles are then associated with specific firewall rules within a Global or Regional Firewall Policy using the `apply_security_profile_group` action.
+    *   Traffic matching the firewall rule is then inspected by IPS according to the profile.
+    *   (See details in section: `#Cloud Next Generation Firewall (NGFW)` - `### G. Configuring the Intrusion Prevention Service (IPS)`).
+-   **Benefits:** Managed service, integrates directly into firewall policies, signatures automatically updated.
+
+# Logging, Monitoring, and Alerting for Network Operations
+
+Effective network operations rely on comprehensive logging, vigilant monitoring, and timely alerting. Google Cloud Observability (formerly Stackdriver) provides the tools for this.
+
+## General Principles
+- **Enable Logs:** Ensure logging is enabled for all relevant network services.
+- **Define Metrics:** Identify key performance and health metrics for each component.
+- **Set Up Alerts:** Configure alerts based on critical log events or metric thresholds.
+- **Regular Review:** Periodically review logs and metrics dashboards for anomalies and trends.
+- **IAM Roles for Monitoring & Logging:**
+    - **`roles/monitoring.viewer`**: Read-only access to Monitoring.
+    - **`roles/monitoring.editor`**: Read-write access, can configure dashboards and alerts.
+    - **`roles/logging.viewer`**: Read-only access to logs.
+    - **`roles/logging.configWriter`**: Permissions to configure log sinks and exclusions.
+
+## 1. VPC Flow Logs
+
+-   **Enabling and Reviewing Logs:**
+    *   Enabled at the **subnet level**.
+    *   Captures information about IP traffic (ingress and egress) for VM instances.
+    *   Configuration options:
+        *   **Aggregation Interval:** (Default: 5s) How often logs are generated (e.g., 5s, 30s, 1m, 5m, 10m, 15m).
+        *   **Sampling Rate:** (Default: 0.5, i.e., 50%) Fraction of network flows to log.
+        *   **Metadata:** (Default: include all) Option to include VM names, geographic origin, etc., or exclude for smaller logs.
+    *   View logs in **Cloud Logging**. Filter by network, subnet, VM, or specific traffic patterns.
+    *   Use cases: Network monitoring, forensics, real-time security analysis, expense optimization.
+
+-   **Key Metrics to Monitor (derived from logs or VM Network Interface metrics via Cloud Monitoring):**
+    *   **Traffic Volume:**
+        *   `compute.googleapis.com/instance/network/received_bytes_count`
+        *   `compute.googleapis.com/instance/network/sent_bytes_count`
+        *   `compute.googleapis.com/instance/network/received_packets_count`
+        *   `compute.googleapis.com/instance/network/sent_packets_count`
+        *   (Aggregated at VM, subnet, or VPC level by filtering).
+    *   **Connection Analysis (from logs):**
+        *   Number of accepted/denied connections by specific firewall rules (requires correlation with Firewall Logs).
+        *   Traffic volume to/from specific internal or external IP addresses.
+        *   Top talkers/listeners within the VPC.
+    *   **Packet Loss (if VMs report this, or inferred):**
+        *   `compute.googleapis.com/instance/network/dropped_received_packets_count`
+        *   `compute.googleapis.com/instance/network/dropped_sent_packets_count`
+
+## 2. Firewall Logging (Cloud NGFW and Legacy VPC Firewall Rules)
+
+-   **Enabling and Reviewing Logs:**
+    *   **Cloud NGFW Policies:** Logging is enabled **per rule** within a global or regional firewall policy. Not enabled by default.
+    *   **Legacy VPC Firewall Rules:** Logging is enabled **per individual VPC firewall rule**. Not enabled by default.
+    *   Logs capture details about connections that match the rule (both allowed and denied), including source/destination IPs and ports, protocol, and the specific rule matched.
+    *   Supported for TCP and UDP traffic. Reply traffic for established connections is allowed due to connection tracking and is typically not logged by the return path's firewall rule.
+    *   View logs in **Cloud Logging**. Filter by `firewall.googleapis.com/policy_rule` (for NGFW) or `compute.googleapis.com/firewall_rule` (for legacy).
+
+-   **Firewall Insights (Part of Network Intelligence Center):**
+    *   Analyzes firewall rule configurations and (if logging is enabled) activity to provide insights.
+    *   Requires the **Firewall Insights API** to be enabled.
+    *   To get activity-based insights (e.g., "Deny rules with hits", "Allow rules with no hits"), firewall rule logging must be enabled for the relevant rules.
+    *   Configuration-based insights (e.g., "Shadowed rules") do not require logging but analyze the rule set itself.
+    *   Key insights include:
+        *   **Shadowed rules:** Rules that are preceded by other rules of higher or equal priority that match the same traffic, meaning the shadowed rule will never be hit.
+        *   **Overly permissive `allow` rules:** Rules that might be too broad (e.g., unused, allowing any IP `0.0.0.0/0`, or allowing unused ports).
+        *   **`Deny` rules with hits:** Indicates that traffic, which might be legitimate, is being blocked.
+        *   **Unused `allow` rules:** Rules with no logged hits over an observation period (default 24 hours, configurable).
+
+-   **Key Metrics to Monitor:**
+    *   **Firewall Hit Counts:**
+        *   `firewallinsights.googleapis.com/insight/rule/hit_count` (Available via Firewall Insights for logged rules).
+        *   Can also be derived by analyzing firewall logs in Cloud Logging (count of log entries per rule).
+    *   **Number of Shadowed Rules:** `firewallinsights.googleapis.com/firewall_rule/shadowed_rule_count`.
+    *   **Traffic Volume by Action (from logs):** Aggregate logged bytes/packets for `allow` vs. `deny` actions.
+    *   **Frequency of specific rule hits:** Useful for identifying frequently triggered security rules or potential misconfigurations.
+
+## 3. Cloud VPN
+
+-   **Enabling and Reviewing Logs:**
+    *   Cloud VPN gateway logs events like tunnel creation, deletion, negotiation status, and errors.
+    *   For dynamic routing (HA VPN), BGP session logs from the associated **Cloud Router** are also crucial (see Cloud Router section).
+    *   View logs in **Cloud Logging**. Filter by resource type `Cloud VPN Gateway` (`vpn_gateway`).
+    *   Key log entries include IKE handshake status, tunnel errors, and dataplane issues.
+
+-   **Key Metrics to Monitor (via Cloud Monitoring for `vpn.googleapis.com`):**
+    *   **Tunnel Status & Availability:**
+        *   `tunnel/status`: (1 for UP, 0 for DOWN). Critical for alerting.
+        *   `tunnel/uptime`: Percentage of time the tunnel was up.
+        *   `tunnel/received_encrypted_packets_count` & `tunnel/sent_encrypted_packets_count`: Indicates if traffic is flowing.
+    *   **Traffic Volume:**
+        *   `network/sent_bytes_count`
+        *   `network/received_bytes_count`
+        *   `network/sent_packets_count`
+        *   `network/received_packets_count`
+    *   **Dropped Packets:**
+        *   `dropped_packets_count` (can be aggregated or filtered by `reason` like `AUTHENTICATION_FAILURE`, `SEQUENCE_NUMBER_OUTSIDE_WINDOW`). High numbers indicate problems.
+    *   **Bandwidth Utilization:** Compare `network/sent_bytes_count` and `network/received_bytes_count` against the tunnel capacity (approx. 3 Gbps total for Classic and HA VPN tunnels, though HA VPN can scale with multiple tunnels).
+    *   **Error Rates:**
+        *   `tunnel/ike_error_count`
+
+-   **Alerting Recommendations:**
+    *   Tunnel status changes to DOWN.
+    *   Consistently high `dropped_packets_count`.
+    *   Traffic volume approaching bandwidth limits.
+    *   Frequent IKE errors.
+
+## 4. Cloud Router
+
+-   **Enabling and Reviewing Logs:**
+    *   Cloud Router logs events related to its lifecycle, BGP session status, and route advertisements.
+    *   Logs are automatically sent to **Cloud Logging**. Filter by resource type `Cloud Router` (`cloud_router`).
+    *   Key log events:
+        *   **Router events:** Start, stop, create, delete router.
+        *   **BGP session events:** Session up/down, negotiation errors, authentication issues (if MD5 is used).
+        *   **Route events:** Advertised routes, learned routes, changes in advertised/learned routes.
+
+-   **Key Metrics to Monitor (via Cloud Monitoring for `router.googleapis.com`):**
+    *   **Router Status:**
+        *   `router/status`: (1 for UP, 0 for DOWN).
+    *   **BGP Session Status:**
+        *   `bgp/session_status`: (1 for UP, 0 for DOWN). Filter by BGP peer name.
+        *   `bgp/uptime`: Percentage of time BGP session was established.
+    *   **Routes:**
+        *   `routes/count`: Number of routes learned or advertised. Use filter `route_type` (`LEARNED` or `ADVERTISED`) and `source` (e.g., BGP peer).
+        *   Monitor against [Cloud Router quotas and limits](https://cloud.google.com/network-connectivity/docs/router/quotas) (e.g., max learned routes per BGP session/region/VPC).
+    *   **BFD Status (if Bidirectional Forwarding Detection is enabled):**
+        *   `bfd/session_status`: (1 for UP, 0 for DOWN) per BGP peer.
+        *   `bfd/rx_packet_count`, `bfd/tx_packet_count`.
+
+-   **Alerting Recommendations:**
+    *   Router status changes to DOWN.
+    *   BGP session status changes to DOWN for any peer.
+    *   Number of learned routes drops significantly or unexpectedly.
+    *   Number of learned routes approaching quota limits.
+    *   BFD session status changes to DOWN (if used).
+
+## 5. VPC Service Controls
+
+-   **Enabling and Reviewing Logs:**
+    *   VPC Service Controls generate **Audit Logs** for actions related to perimeters and policy enforcement.
+    *   These logs are part of Cloud Audit Logs and can be found by filtering for the service name `vpcservicecontrols.googleapis.com`.
+    *   Key logged events:
+        *   Creation, deletion, or modification of service perimeters and access levels.
+        *   Policy enforcement actions: Details of requests that were allowed or denied due to perimeter policies.
+        *   Changes to the list of restricted or accessible services within a perimeter.
+    *   **Dry-run mode:** When a perimeter is in dry-run mode, violations are logged but not enforced, allowing you to test policies.
+    *   Review these logs in **Cloud Logging** to understand policy impact and troubleshoot access issues.
+
+-   **Key Metrics to Monitor (Primarily derived from analyzing Audit Logs):**
+    *   **Number of Denied Requests:** Track the count of requests blocked by service perimeters. A sudden spike might indicate misconfiguration or an attack.
+    *   **Frequency of Policy Violations:** Monitor how often ingress/egress rules or perimeter configurations lead to logged violations (even in dry-run mode).
+    *   **Rate of Perimeter Updates:** Frequent changes to perimeters might indicate instability or ongoing configuration efforts; less frequent changes suggest a stable policy.
+    *   **Access Level Usage:** Monitor which access levels are being evaluated and how often they grant or deny access (requires analyzing log details).
+
+-   **Alerting Recommendations:**
+    *   Significant increase in denied requests due to VPC Service Controls.
+    *   Unauthorized modifications to service perimeters or access levels (critical audit log events).
+    *   Failures in applying or updating perimeter configurations.
+    *   Unexpected services being accessed or blocked by a perimeter (requires log analysis and custom alerts).
+
+## 6. Cloud Interconnect and VLAN Attachments
+
+-   **Enabling and Reviewing Logs:**
+    *   **Cloud Interconnect (Dedicated/Partner):** Generates Audit Logs for configuration changes (e.g., creating/deleting interconnects, VLAN attachments).
+    *   Operational status and BGP information are primarily logged via the associated **Cloud Router(s)** (see Cloud Router section).
+    *   **MACsec (if enabled):** Specific logs related to MACsec encryption status, key rotation events, and errors are generated.
+    *   View Audit Logs in Cloud Logging, filtering for `Cloud Interconnect` or `compute.googleapis.com` with relevant API calls. MACsec logs also appear under the Interconnect resource.
+
+-   **Key Metrics to Monitor (via Cloud Monitoring for `interconnect.googleapis.com`):**
+    *   **Interconnect (Port) Status (for Dedicated Interconnect):**
+        *   `interconnect/link_operational`: (1 for UP, 0 for DOWN) for each physical link/port.
+        *   `interconnect/light_level_status/tx` & `interconnect/light_level_status/rx`: Optical power levels (OK, LOW, VERY_LOW, NO_LIGHT). Requires Optical Power Monitoring.
+    *   **VLAN Attachment Status & Traffic:**
+        *   `network/attachment/operational`: (1 for ACTIVE, 0 for INACTIVE).
+        *   `network/attachment/sent_bytes_count`
+        *   `network/attachment/received_bytes_count`
+        *   `network/attachment/sent_packets_count`
+        *   `network/attachment/received_packets_count`
+        *   `network/attachment/capacity_utilization_ratio`: How much of the VLAN attachment's configured capacity is being used.
+    *   **MACsec Metrics (if enabled):**
+        *   `network/attachment/macsec/status/operational`: (1 for true, 0 for false).
+        *   `network/attachment/macsec/sent_encrypted_packets_count`, `network/attachment/macsec/received_decrypted_packets_count`.
+        *   `network/attachment/macsec/errors/integrity_check_failed_count`, `network/attachment/macsec/errors/decryption_failure_count`.
+    *   **Cloud Router Metrics:** BGP session status and route counts for BGP sessions over the VLAN attachments are critical (see Cloud Router section).
+
+-   **Alerting Recommendations:**
+    *   Interconnect link status changes to DOWN.
+    *   VLAN attachment status changes to INACTIVE.
+    *   Low light levels on Dedicated Interconnect ports.
+    *   High capacity utilization ratio on VLAN attachments.
+    *   BGP session down over a VLAN attachment.
+    *   MACsec operational status down or significant MACsec errors (if used).
+
+## 7. Load Balancers
+
+-   **Enabling and Reviewing Logs:**
+    *   Logging must be **enabled per backend service** for most load balancer types (e.g., Global/Regional External HTTP(S) LB, Internal HTTP(S) LB, TCP/SSL Proxy). It's not enabled by default.
+    *   External Passthrough Network Load Balancers and Internal Passthrough Network Load Balancers do **not** generate logs themselves; logging for these relies on VPC Flow Logs for backend VMs and/or Firewall Rules Logging.
+    *   Logs capture details like client IP, request URL, user agent, HTTP status codes, latency (total time, backend time), bytes served, and the backend instance that handled the request.
+    *   For load balancers integrated with Cloud CDN or Cloud Armor, related CDN cache status and Armor policy actions are also included in these logs.
+    *   View logs in **Cloud Logging**. Filter by load balancer type (e.g., `http_load_balancer`, `tcp_ssl_proxy_load_balancer`, `internal_http_load_balancer`).
+    *   **Log Sampling:** Can be configured on the backend service to reduce the volume of logs (e.g., log 50% of requests).
+
+-   **Key Metrics to Monitor (via Cloud Monitoring, metrics vary by LB type, generally under `loadbalancing.googleapis.com`):**
+    *   **Traffic Volume & Request Rates:**
+        *   `https/request_count` (or `tcp/connection_count`, `ssl/connection_count` etc.)
+        *   `https/request_bytes` & `https/response_bytes`
+    *   **Latency:**
+        *   `https/total_latencies`: Total time from when request hits GFE until first byte of response.
+        *   `https/backend_latencies`: Time spent by the backend processing the request.
+        *   `https/frontend_rtt_latencies`: Round trip time between client and GFE (for External HTTP(S) LB).
+    *   **Error Rates & HTTP Status Codes:**
+        *   `https/response_count` (can be filtered by `response_code_class`: 2xx, 3xx, 4xx, 5xx, or specific `response_code`).
+        *   High rates of 4xx or 5xx errors indicate issues.
+    *   **Backend Health & Availability:**
+        *   `backend_instance_health` (or `backend_endpoint_health` for NEGs): Percentage of healthy backends.
+        *   `https/backend_request_count` (filtered by backend service/instance to see distribution).
+    *   **Saturation/Utilization (for Application LBs):**
+        *   `https/backend_saturation_utilization`: For MIGs, indicates if CPU utilization or RPS targets are being met.
+    *   **Connections (for L4 LBs like Network LB, TCP/SSL Proxy):**
+        *   `tcp/active_connections`, `tcp/new_connections`.
+
+-   **Alerting Recommendations:**
+    *   High backend latency (e.g., p95 or p99 latency exceeds threshold).
+    *   Significant increase in 5xx server error rates.
+    *   Significant increase in 4xx client error rates (could indicate client-side issues or attacks).
+    *   Low backend health (e.g., less than 75% of backends healthy).
+    *   High request queue spillover (for LBs with queuing).
+    *   Traffic volume approaching capacity limits of backends or LB itself.
+
+## 8. Google Cloud Armor
+
+-   **Enabling and Reviewing Logs:**
+    *   Cloud Armor events (requests allowed, denied, or throttled by security policies) are logged via the **associated Load Balancer's logging mechanism**.
+    *   To see Cloud Armor logs, ensure that logging is enabled on the Backend Service to which the Cloud Armor security policy is attached.
+    *   The logs will include a `jsonPayload.enforcedSecurityPolicy` field (or similar, like `jsonPayload.securityPolicy`) indicating the policy name, outcome (e.g., ACCEPT, DENY), rule priority, and matched rule signature if applicable (e.g., for preconfigured WAF rules).
+    *   **Preview Mode:** When a Cloud Armor rule is in preview mode (`--preview` flag), actions are logged as if they were enforced, but the actual request is not blocked/denied. This is useful for testing rules.
+    *   View logs in **Cloud Logging**, typically by querying the logs of the associated load balancer.
+
+-   **Key Metrics to Monitor (via Cloud Monitoring, often prefixed by `loadbalancing.googleapis.com/armor/` or available under the load balancer metrics):**
+    *   **Request Count by Policy Action:**
+        *   `request_count_by_action` (or similar metric under the LB): Filter by `security_policy_action` (ALLOW, DENY, REDIRECT, THROTTLE).
+        *   `blocked_request_count`: Total requests blocked by Cloud Armor.
+    *   **Requests by Policy Name/Rule Priority:** Useful for understanding which policies/rules are most active.
+        *   `request_count` filtered by `security_policy_name` and `security_policy_rule_priority`.
+    *   **Preconfigured WAF Rule Matches:**
+        *   Metrics indicating matches for specific WAF signatures (e.g., `sqli_match_count`, `xss_match_count`). These might be part of `matched_rule_signature_count` or similar, filterable by signature name.
+    *   **Rate Limiting Metrics (if configured):**
+        *   Number of throttled requests.
+        *   Number of requests exceeding configured thresholds that were denied (if `exceed_action: DENY`).
+    *   **Adaptive Protection Metrics (if Managed Protection Plus is enabled):**
+        *   `adaptive_protection/identified_attack_count`
+        *   `adaptive_protection/alerted_request_count` (requests matching an attack signature)
+        *   `adaptive_protection/denied_request_count_by_suggested_rule` (if suggested rules are deployed)
+    *   **Threat Intelligence Metrics (if Managed Protection Plus is enabled):**
+        *   `threat_intelligence/blocked_request_count` (requests blocked due to matching Threat Intelligence feeds like `iplist-tor-exit-nodes`).
+
+-   **Alerting Recommendations:**
+    *   Significant increase in denied/blocked requests (could indicate an attack or misconfiguration).
+    *   High number of requests matching specific critical WAF rule signatures (e.g., SQLi, XSS).
+    *   Activation of Adaptive Protection alerts or high volume of requests matching attack signatures.
+    *   Rate limiting rules being frequently triggered.
+    *   Unexpected traffic being allowed/denied by a specific policy or rule.
+
+## 9. Cloud NAT
+
+-   **Enabling and Reviewing Logs:**
+    *   Logging for Cloud NAT can be enabled when creating or editing a NAT gateway.
+    *   You can choose to log:
+        *   **Translations:** Successful NAT allocations (a log entry for each new connection from an internal IP to an external IP via NAT).
+        *   **Errors:** Events like running out of NAT IPs or ports, or endpoint-independent mapping conflicts.
+        *   Both translations and errors, or none.
+    *   Logs are sent to **Cloud Logging**. Filter by resource type `Cloud NAT Gateway` (`nat_gateway`).
+    *   Error logs are important for diagnosing issues like port exhaustion.
+    *   Translation logs can be voluminous but are useful for detailed flow analysis or security audits.
+
+-   **Key Metrics to Monitor (via Cloud Monitoring for `nat.googleapis.com`):**
+    *   **Gateway Health & Status:**
+        *   `gateway/status`: (1 for RUNNING, 0 for other states).
+    *   **Port Usage & Availability:**
+        *   `nat_port_usage_fraction`: Fraction of total available NAT ports currently in use. A high fraction indicates risk of port exhaustion.
+        *   `ports/total_ports`: Total ports available on the gateway.
+        *   `ports/allocated_ports`: Ports currently allocated.
+    *   **NAT IP Address Usage:**
+        *   `nat_ip_address_count`: Number of external IP addresses assigned to the NAT gateway.
+        *   `nat_ip_address_utilization_fraction`: If using auto-allocated IPs, how many are in use.
+    *   **Traffic Volume:**
+        *   `network/sent_bytes_count`
+        *   `network/received_bytes_count`
+        *   `network/sent_packets_count`
+        *   `network/received_packets_count`
+    *   **Dropped Packets & Errors:**
+        *   `dropped_sent_packets_count` & `dropped_received_packets_count`: Packets dropped by NAT, often due to errors like no ports available. Filter by `reason`.
+        *   `errors/allocation_error_count`: Errors assigning NAT IP/port.
+        *   `errors/endpoint_independent_mapping_conflict_count`: Conflicts if EIM is enabled.
+    *   **Active Connections:**
+        *   `active_connections`: Number of active NATted connections.
+
+-   **Alerting Recommendations:**
+    *   `nat_port_usage_fraction` exceeding a high threshold (e.g., > 0.8 or 0.9) to preempt port exhaustion.
+    *   Significant number of `dropped_sent_packets_count` (especially with reason `OUT_OF_RESOURCES`).
+    *   `gateway/status` is not RUNNING.
+    *   High `errors/allocation_error_count` or `errors/endpoint_independent_mapping_conflict_count`.
+
+## 10. Cloud DNS
+
+-   **Enabling and Reviewing Logs:**
+    *   **DNS Query Logging:** Can be enabled for managed **private zones** and **forwarding zones** that are bound to a VPC network. It's not available for public zones.
+    *   When enabled, Cloud DNS logs each DNS query that its name servers receive for the specified zones from VMs or inbound forwarding IP addresses within the associated VPCs.
+    *   Logs include details like the source VM (if internal), query name, record type, response code (e.g., NOERROR, NXDOMAIN), and the records returned (if any).
+    *   View logs in **Cloud Logging**. Filter by resource type `Cloud DNS Query` (`dns_query`).
+    *   **Audit Logs:** Cloud DNS also generates Audit Logs for all configuration changes (e.g., creating/deleting zones, record sets). These are crucial for tracking administrative actions.
+
+-   **Key Metrics to Monitor (via Cloud Monitoring for `dns.googleapis.com`):**
+    *   **Query Volume (for logged zones):**
+        *   `query_count`: Total number of DNS queries processed. Can be filtered by `zone_name`, `network_name` (VPC), `record_type`, `response_code`.
+        *   Useful for understanding query load and identifying spikes or drops in traffic.
+    *   **Query Latency (for private zones):**
+        *   `query_latencies`: Distribution of query processing time by Cloud DNS servers for private zones.
+    *   **Zone Health/Availability (inferred):**
+        *   Consistent `NXDOMAIN` or `SERVFAIL` response codes for valid queries (from logs or `query_count` metric filtered by response code) can indicate issues with zone configuration or health.
+    *   **DNSSEC Status (for public zones):**
+        *   While not a direct metric, monitor the DNSSEC signing status of public zones in the Cloud DNS console to ensure zones are correctly signed and keys are valid.
+        *   Audit logs will show DNSSEC configuration changes.
+
+-   **Alerting Recommendations:**
+    *   Significant increase in `NXDOMAIN` or `SERVFAIL` responses for critical zones/records.
+    *   Unexpected drop in query volume for an important zone.
+    *   High query latency for private zones (if impacting application performance).
+    *   Alerts on critical Audit Log events related to unauthorized changes in DNS zones or records.
+
+### Combined Troubleshooting with Flow Logs, Firewall Logs, and Packet Mirroring
+
+While VPC Flow Logs, Firewall Logs, and Packet Mirroring are powerful individually, their combined use provides a comprehensive approach to diagnosing complex network connectivity issues.
+
+**Strategy 1: Verifying Reachability and Path (VPC Flow Logs + Firewall Logs)**
+
+This strategy helps determine if traffic is reaching its destination and if firewalls are a factor.
+
+1.  **Identify the Problem Flow:** Clearly define the source IP/Port, destination IP/Port, and protocol of the problematic connection.
+2.  **Enable VPC Flow Logs:**
+    *   Ensure VPC Flow Logs are enabled on the subnets containing the source and destination VMs.
+    *   If traffic traverses intermediate hops (like NVAs or multiple VPCs), enable Flow Logs on those subnets as well.
+    *   During active troubleshooting, consider setting the **aggregation interval** to a low value (e.g., 5 seconds) and the **sampling rate** to a high value (e.g., 1.0 or 100%) to capture more granular data. Remember to revert these settings after troubleshooting to manage costs.
+3.  **Enable Firewall Logs:**
+    *   Ensure logging is enabled on relevant GCP firewall rules (both legacy VPC firewall rules and Cloud NGFW policy rules) that might be impacting the flow.
+    *   Crucially, enable logging for both potential `allow` rules you expect to match and any `deny` rules (especially broad or default deny rules) that might be unintentionally blocking the traffic.
+4.  **Generate Test Traffic:** Initiate connections or send traffic that replicates the problematic flow.
+5.  **Analyze VPC Flow Logs Sequentially:**
+    *   **Source VM's Subnet:** Check Flow Logs for egress packets from the source VM. Note `bytes_sent`, `packets_sent`, and the `dest_ip`, `dest_port`.
+    *   **Intermediate Hops (if any):** If traffic routes through an NVA or another VPC (via peering/VPN), check Flow Logs on the NVA's ingress NIC/subnet to see if traffic arrived, and then on its egress NIC/subnet to see if it was forwarded.
+    *   **Destination VM's Subnet:** Check Flow Logs for ingress packets to the destination VM. Note `bytes_received`, `packets_received`.
+    *   **Absence of Logs:** If logs are missing at an expected point (e.g., no ingress logs at the destination VM's subnet), it indicates traffic is being dropped *before* that point in the network path.
+6.  **Correlate with Firewall Logs:**
+    *   In Cloud Logging, search firewall logs (filtering for `firewall.googleapis.com/policy_rule` for NGFW or `compute.googleapis.com/firewall_rule` for legacy) for entries matching the source IP, destination IP, and port around the timestamp of your test traffic.
+    *   **Blocked Traffic:** A log entry with an `action: DENY` (or similar, depending on log format) matching the flow directly indicates the responsible firewall rule and policy.
+    *   **Allowed Traffic:** A log entry with an `action: ALLOW` confirms traffic passed that specific firewall point.
+    *   **No Matching Firewall Logs:** If VPC Flow Logs show traffic reaching a VM's NIC (i.e., ingress flow log exists for the VM), but no corresponding GCP firewall log entry (neither allow nor deny) is found, consider these possibilities:
+        *   The issue might be a host-based firewall on the VM itself (e.g., `iptables`, Windows Firewall).
+        *   The application on the destination VM might not be listening on the specified port.
+        *   There might be routing issues for the *return* traffic from the destination VM.
+
+7.  **Trace the Path:** By examining logs at each segment, you can pinpoint where traffic stops flowing or gets denied.
+
+**Strategy 2: Deep Packet Inspection for Payload/Application Issues (Packet Mirroring)**
+
+Use this when L3/L4 connectivity appears fine (Flow Logs show packets delivered, Firewall Logs show traffic allowed), but the application still fails. This often points to issues within the packet payload or at higher OSI layers.
+
+1.  **When to Use:**
+    *   Application-specific errors despite network connectivity (e.g., TLS handshake failures, HTTP errors like 502/503 that aren't from the LB, database connection timeouts).
+    *   Suspected protocol violations or malformed packets.
+    *   Need to verify data integrity or inspect encrypted traffic (if you have keys and can decrypt offline).
+2.  **Setup Packet Mirroring:**
+    *   Create a Packet Mirroring policy in the same region as the VMs to be mirrored.
+    *   **Mirrored Sources:** Specify the VM instances whose traffic you want to inspect (can be the source, destination, or both). You can select VMs by name, network tag, or entire subnets.
+    *   **Collector Destination:** This must be an Internal Passthrough Network Load Balancer. The backends of this load balancer are one or more "collector" VMs (typically in a MIG for scalability/HA) running packet capture software (e.g., `tcpdump`, Wireshark, or a third-party analysis tool).
+    *   **Filters (Optional but Recommended):** To reduce the volume of mirrored traffic, apply filters based on:
+        *   CIDR ranges (source or destination).
+        *   Protocols (e.g., TCP, UDP, ICMP).
+        *   Direction (INGRESS, EGRESS, or BOTH).
+3.  **Capture Traffic:** On the collector VM(s), start your packet capture tool (e.g., `sudo tcpdump -i eth0 -w /tmp/capture.pcap host <mirrored_vm_ip_1> or host <mirrored_vm_ip_2>`).
+4.  **Analyze Captured Packets (.pcap files):**
+    *   Use tools like Wireshark to open the .pcap files.
+    *   Look for application-layer errors (e.g., HTTP status codes in responses, TLS alert messages).
+    *   Verify protocol handshakes (TCP SYN/ACK, TLS ClientHello/ServerHello).
+    *   Check for excessive TCP retransmissions, resets (RST packets), or out-of-order packets.
+    *   If inspecting payloads, ensure compliance with data privacy regulations.
+
+**Strategy 3: Diagnosing Asymmetric Routing (VPC Flow Logs)**
+
+Asymmetric routing (where request and response packets take different paths) can break stateful connections.
+
+1.  **Symptoms:** Connections establish but then stall or fail, or work intermittently. Firewalls might drop return packets if they only saw one direction of the flow.
+2.  **Method using VPC Flow Logs:**
+    *   Enable VPC Flow Logs for subnets containing both the client and server VMs.
+    *   Initiate a connection from client to server.
+    *   **Client-Side Logs:**
+        *   Look for the **outbound** flow log entry from Client_IP:Client_Port to Server_IP:Server_Port.
+        *   Look for the **inbound** (reply) flow log entry from Server_IP:Server_Port to Client_IP:Client_Port.
+    *   **Server-Side Logs:**
+        *   Look for the **inbound** flow log entry from Client_IP:Client_Port to Server_IP:Server_Port.
+        *   Look for the **outbound** (reply) flow log entry from Server_IP:Server_Port to Client_IP:Client_Port.
+    *   **Analysis:**
+        *   If the reply traffic (Server to Client) is not seen in the client's subnet logs, or if the source/destination IPs/ports in the reply logs at the server don't match what the client expects, it could indicate asymmetric routing.
+        *   This often happens with multiple NICs on VMs, complex static/dynamic routing configurations, or misconfigured VPNs/Interconnects where routing tables are not consistent for both directions of traffic.
+
+**Key Considerations for Troubleshooting with Logs & Packet Mirroring:**
+-   **Log Volume & Cost:** Extensive logging (high sampling, low aggregation for Flow Logs) and continuous packet mirroring generate significant data and can incur substantial costs. Use these settings judiciously, primarily during active troubleshooting, and then revert to more cost-effective defaults.
+-   **Time Synchronization (NTP):** Ensure all VMs (sources, destinations, collectors) are synchronized to a reliable time source (like Google's metadata server). This is crucial for accurately correlating events across different logs and packet captures.
+-   **IAM Permissions:** Ensure you have the necessary IAM roles:
+    *   `roles/logging.viewer` to read logs.
+    *   `roles/compute.networkViewer` for network configurations.
+    *   `roles/compute.packetMirroringUser` (or Admin) to create/manage packet mirroring policies.
+    *   `roles/compute.instanceAdmin.v1` (or equivalent) if you need to log into collector VMs.
+-   **Iterative Approach:** Start with broader tools like Flow Logs and Firewall Logs, then narrow down to Packet Mirroring if deeper inspection is needed.
+
+
+
+
