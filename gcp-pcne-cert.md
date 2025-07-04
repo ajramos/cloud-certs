@@ -288,6 +288,9 @@ NOTE: When you want to expand a subred IP range, it only accept superset of the 
 - **Subnet access:** Check if specific subnets are shared with service project
 - **Cross-project resources:** Verify service account permissions
 
+## QUOTA_EXCEEDED Error When Creating a VPC
+If you get a `QUOTA_EXCEEDED` error when creating a VPC, go to the [Quotas page](https://console.cloud.google.com/iam-admin/quotas) in IAM and request a quota increase. Wait for approval before proceeding.
+
 ## VPC Routes
 
 ### Routes
@@ -416,7 +419,7 @@ Routes Order:
 
 **Static Route vs Dynamic Route**
 
-| Type | Destination | Next hop | Removable | Applies To |
+| Type | Destination | Next Hop | Removable | Applies To |
 | --- | --- | --- | --- | --- |
 | Static Route | - IP range broader than a subnet IP range<br>- IP range does not overlap with subnet IP range | One of:<br>- Instance by name<br>- Instance by IP address<br>- Cloud VPN tunnel | Yes | Either:<br>- All instance in network<br>- Specific instance in network identified by network tag |
 | Dynamic Route | - IP range broader than a subnet IP range<br>- IP range does not overlap with subnet IP | IP address of the Cloud Router's BGP peer. | Only by a Cloud Router if it no longer receives router from its BGP peer. | - Instances in the same Region as the Cloud Router if the VPC network is in regional dynamic routing<br>- If Global-all intances in the VPC |
@@ -1007,6 +1010,9 @@ Setting the maximum number of Pods at the node pool level overrides the cluster-
 - Add additional Pod IP ranges to existing clusters
 - Create new node pools with new IP ranges
 - Use smaller Pod CIDR ranges (/27, /28) for efficiency
+
+### Maximum Pods per Node with /23 Pod IP Range
+If a GKE node is configured with a /23 Pod IP address range (512 IPs), the maximum number of Pods that can be scheduled on the node is **256**. This is because GKE allocates only half of the available IPs for Pods on each node, providing a buffer to prevent Pods from becoming unschedulable due to a transient lack of IP addresses.  
 
 # GKE Networking
 
@@ -1601,7 +1607,7 @@ HA VPN over Cloud Interconnect provides an IPsec-encrypted, high-availability co
 3.  **HA VPN Gateway in GCP:** A regional Google Cloud resource providing two external IP addresses for VPN tunnel termination.
 4.  **Cloud Router(s) in GCP:** Used by both Cloud Interconnect (for BGP over VLANs) and HA VPN (for BGP over VPN tunnels) to exchange routes. Often, separate Cloud Routers are used for each function for clarity, or carefully configured BGP sessions on shared routers.
 5.  **On-premises VPN Gateway(s):** Your physical or virtual VPN devices in your data center.
-6.  **IPsec Tunnels:** Encrypted tunnels established between the HA VPN gateway in GCP and your on-premises VPN gateways. These tunnels run *over* the Cloud Interconnect connection.
+6.  **IPsec Tunnels:** Encrypted tunnels established between the HA VPN gateway in GCP and your on-premises VPN gateway(s). These tunnels run *over* the Cloud Interconnect connection.
 
 **Configuration Steps (High-Level):**
 1.  **Establish Cloud Interconnect:** Ensure your Dedicated or Partner Interconnect is provisioned and VLAN attachments are active. BGP sessions over these VLANs should be established with your on-premises routers, advertising on-premises routes to GCP.
@@ -2231,6 +2237,16 @@ gcloud compute url-maps invalidate-cdn-cache [URL_MAP_NAME] \
 3. **Cloud CDN Service Account**  
    Grant bucket viewer role to  
    `service-PROJECT_NUM@cloud-cdn-fill.iam.gserviceaccount.com`
+
+## Cloud CDN Access Control
+
+Cloud CDN offers three ways to help you control access to your cached content:
+
+- **Signed URLs**: Let you serve responses from Google Cloud's globally distributed caches when you need requests to be authorized. Anyone with the signed URL can access the resource for a limited time.
+
+- **Signed cookies**: Also let you access a resource for a limited time. They are helpful when you need to sign tens or hundreds of URLs for each user.
+
+- **Private origin authentication**: Lets you limit connections to your Amazon Simple Storage Service (Amazon S3) buckets or other compatible object stores and prevent users from accessing them directly.
 
 ## Cache Modes
 
@@ -3717,12 +3733,12 @@ Effective network operations rely on comprehensive logging, vigilant monitoring,
     *   **BGP Session Status:**
         *   `bgp/session_status`: (1 for UP, 0 for DOWN). Filter by BGP peer name.
         *   `bgp/uptime`: Percentage of time BGP session was established.
-    *   **Routes:**
-        *   `routes/count`: Number of routes learned or advertised. Use filter `route_type` (`LEARNED` or `ADVERTISED`) and `source` (e.g., BGP peer).
-        *   Monitor against [Cloud Router quotas and limits](https://cloud.google.com/network-connectivity/docs/router/quotas) (e.g., max learned routes per BGP session/region/VPC).
-    *   **BFD Status (if Bidirectional Forwarding Detection is enabled):**
-        *   `bfd/session_status`: (1 for UP, 0 for DOWN) per BGP peer.
-        *   `bfd/rx_packet_count`, `bfd/tx_packet_count`.
+        *   **Routes:**
+            *   `routes/count`: Number of routes learned or advertised. Use filter `route_type` (`LEARNED` or `ADVERTISED`) and `source` (e.g., BGP peer).
+            *   Monitor against [Cloud Router quotas and limits](https://cloud.google.com/network-connectivity/docs/router/quotas) (e.g., max learned routes per BGP session/region/VPC).
+        *   **BFD Status (if Bidirectional Forwarding Detection is enabled):**
+            *   `bfd/session_status`: (1 for UP, 0 for DOWN) per BGP peer.
+            *   `bfd/rx_packet_count`, `bfd/tx_packet_count`.
 
 -   **Alerting Recommendations:**
     *   Router status changes to DOWN.
@@ -4010,7 +4026,3 @@ Asymmetric routing (where request and response packets take different paths) can
     *   `roles/compute.packetMirroringUser` (or Admin) to create/manage packet mirroring policies.
     *   `roles/compute.instanceAdmin.v1` (or equivalent) if you need to log into collector VMs.
 -   **Iterative Approach:** Start with broader tools like Flow Logs and Firewall Logs, then narrow down to Packet Mirroring if deeper inspection is needed.
-
-
-
-
